@@ -12,6 +12,7 @@ FORGE_DIR="$(cd "$(dirname "$0")" && pwd)"
 CLAUDE_DIR="$HOME/.claude"
 COMPANY=""
 WORKSPACE=""
+INIT_DEVCONTAINER=""
 
 # --- Parse arguments ---
 while [[ $# -gt 0 ]]; do
@@ -24,25 +25,31 @@ while [[ $# -gt 0 ]]; do
             WORKSPACE="$2"
             shift 2
             ;;
+        --init-devcontainer)
+            INIT_DEVCONTAINER="$2"
+            shift 2
+            ;;
         --help|-h)
             echo "Usage: ./install.sh [--company NAME --workspace DIR]"
+            echo "       ./install.sh --init-devcontainer PROJECT_DIR [--company NAME]"
             echo ""
             echo "Options:"
-            echo "  --company NAME      Company profile to deploy (directory under companies/)"
-            echo "  --workspace DIR     Root directory where the company CLAUDE.md will be symlinked"
+            echo "  --company NAME              Company profile to deploy (directory at repo root)"
+            echo "  --workspace DIR             Root directory where the company CLAUDE.md will be symlinked"
+            echo "  --init-devcontainer DIR     Copy devcontainer config into a project directory"
             echo ""
             echo "Examples:"
-            echo "  ./install.sh                                        # personal preferences only"
-            echo "  ./install.sh --company atonra --workspace ~/dev     # + Atonra conventions"
+            echo "  ./install.sh                                        # personal preferences only (symlinks)"
+            echo "  ./install.sh --company atonra --workspace ~/dev     # + Atonra conventions (symlinks)"
+            echo "  ./install.sh --init-devcontainer ~/dev/my-project   # setup devcontainer in a project"
+            echo "  ./install.sh --init-devcontainer ~/dev/my-project --company atonra"
             echo ""
             echo "Available company profiles:"
-            if [ -d "$FORGE_DIR/companies" ]; then
-                for dir in "$FORGE_DIR/companies"/*/; do
-                    [ -d "$dir" ] && echo "  - $(basename "$dir")"
-                done
-            else
-                echo "  (none)"
-            fi
+            for dir in "$FORGE_DIR"/*/; do
+                if [ -f "$dir/CLAUDE.md" ]; then
+                    echo "  - $(basename "$dir")"
+                fi
+            done
             exit 0
             ;;
         *)
@@ -53,7 +60,57 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# --- Validate arguments ---
+# --- Devcontainer init mode ---
+if [[ -n "$INIT_DEVCONTAINER" ]]; then
+    PROJECT_DIR="$(realpath "$INIT_DEVCONTAINER")"
+    if [ ! -d "$PROJECT_DIR" ]; then
+        echo "ERROR: Project directory does not exist: $PROJECT_DIR"
+        exit 1
+    fi
+
+    DEVCONTAINER_SRC="$FORGE_DIR/.devcontainer"
+    DEVCONTAINER_DST="$PROJECT_DIR/.devcontainer"
+
+    if [ -d "$DEVCONTAINER_DST" ]; then
+        echo "WARNING: $DEVCONTAINER_DST already exists. Overwriting."
+    fi
+
+    mkdir -p "$DEVCONTAINER_DST"
+    cp "$DEVCONTAINER_SRC/Dockerfile" "$DEVCONTAINER_DST/Dockerfile"
+    cp "$DEVCONTAINER_SRC/init-firewall.sh" "$DEVCONTAINER_DST/init-firewall.sh"
+    cp "$DEVCONTAINER_SRC/devcontainer.json" "$DEVCONTAINER_DST/devcontainer.json"
+
+    # If company specified, add company CLAUDE.md mount to devcontainer.json
+    if [[ -n "$COMPANY" ]]; then
+        COMPANY_DIR="$FORGE_DIR/$COMPANY"
+        if [ ! -d "$COMPANY_DIR" ] || [ ! -f "$COMPANY_DIR/CLAUDE.md" ]; then
+            echo "ERROR: Company profile not found: $COMPANY_DIR"
+            exit 1
+        fi
+
+        # Add company CLAUDE.md as a bind-mount to workspace root
+        COMPANY_MOUNT="\"source=\${localEnv:CLAUDE_FORGE_DIR:\${localEnv:HOME}/dev/claude-forge}/$COMPANY/CLAUDE.md,target=/workspace/CLAUDE.md,type=bind,readonly\""
+
+        # Insert the company mount into the mounts array
+        sed -i "s|\"source=\${localEnv:CLAUDE_FORGE_DIR:\${localEnv:HOME}/dev/claude-forge}/agents,target=/home/node/.claude/agents,type=bind,readonly\"|\"source=\${localEnv:CLAUDE_FORGE_DIR:\${localEnv:HOME}/dev/claude-forge}/agents,target=/home/node/.claude/agents,type=bind,readonly\",\n    $COMPANY_MOUNT|" "$DEVCONTAINER_DST/devcontainer.json"
+
+        echo "  Company profile '$COMPANY' mount added to devcontainer.json"
+    fi
+
+    echo ""
+    echo "Devcontainer initialized in: $DEVCONTAINER_DST"
+    echo ""
+    echo "Prerequisites:"
+    echo "  1. Set CLAUDE_FORGE_DIR env var (or clone forge to ~/dev/claude-forge)"
+    echo "  2. Set ANTHROPIC_API_KEY in your shell profile"
+    echo ""
+    echo "Usage:"
+    echo "  Open $PROJECT_DIR in VS Code → 'Reopen in Container'"
+    echo "  Or: cd $PROJECT_DIR && devcontainer up --workspace-folder ."
+    exit 0
+fi
+
+# --- Validate arguments (symlink mode) ---
 if [[ -n "$COMPANY" && -z "$WORKSPACE" ]]; then
     echo "ERROR: --company requires --workspace"
     exit 1
@@ -65,12 +122,14 @@ if [[ -z "$COMPANY" && -n "$WORKSPACE" ]]; then
 fi
 
 if [[ -n "$COMPANY" ]]; then
-    COMPANY_DIR="$FORGE_DIR/companies/$COMPANY"
-    if [ ! -d "$COMPANY_DIR" ]; then
+    COMPANY_DIR="$FORGE_DIR/$COMPANY"
+    if [ ! -d "$COMPANY_DIR" ] || [ ! -f "$COMPANY_DIR/CLAUDE.md" ]; then
         echo "ERROR: Company profile not found: $COMPANY_DIR"
         echo "Available profiles:"
-        for dir in "$FORGE_DIR/companies"/*/; do
-            [ -d "$dir" ] && echo "  - $(basename "$dir")"
+        for dir in "$FORGE_DIR"/*/; do
+            if [ -f "$dir/CLAUDE.md" ]; then
+                echo "  - $(basename "$dir")"
+            fi
         done
         exit 1
     fi
@@ -128,7 +187,7 @@ if [[ -n "$COMPANY" ]]; then
     # Company CLAUDE.md → workspace root
     safe_link "$COMPANY_DIR/CLAUDE.md" "$WORKSPACE/CLAUDE.md" "CLAUDE.md ($COMPANY conventions → $WORKSPACE/)"
 
-    # Company skills (if any) → individual symlinks into forge skills/
+    # Company skills → individual symlinks into forge skills/
     if [ -d "$COMPANY_DIR/skills" ]; then
         for skill_entry in "$COMPANY_DIR/skills"/*; do
             skill_name="$(basename "$skill_entry")"
@@ -136,6 +195,16 @@ if [[ -n "$COMPANY" ]]; then
                 safe_link "$skill_entry" "$FORGE_DIR/skills/$skill_name" "skills/$skill_name ($COMPANY)"
             elif [ -d "$skill_entry" ] && [ -f "$skill_entry/SKILL.md" ]; then
                 safe_link "$skill_entry" "$FORGE_DIR/skills/$skill_name" "skills/$skill_name/ ($COMPANY)"
+            fi
+        done
+    fi
+
+    # Company agents → individual symlinks into forge agents/
+    if [ -d "$COMPANY_DIR/agents" ]; then
+        for agent_entry in "$COMPANY_DIR/agents"/*; do
+            agent_name="$(basename "$agent_entry")"
+            if [ -f "$agent_entry" ]; then
+                safe_link "$agent_entry" "$FORGE_DIR/agents/$agent_name" "agents/$agent_name ($COMPANY)"
             fi
         done
     fi

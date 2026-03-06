@@ -3,13 +3,13 @@
 Rationale behind key choices in this configuration. Update when decisions change.
 
 ## Company profiles are pluggable, not hardcoded
-The forge is company-agnostic. Company conventions live in `companies/<name>/CLAUDE.md`.
-Deployed via `install.sh --company <name> --workspace <dir>` which symlinks the company
-CLAUDE.md to the workspace root. Claude Code walks up directories, so all projects under
-that workspace inherit company conventions automatically. Open/Closed principle: the
-company file is closed for modification, projects extend via their own CLAUDE.md.
-Company-specific skills live in `companies/<name>/skills/` and are symlinked into the
-global skills directory at install time.
+The forge is company-agnostic. Company conventions live in `<name>/CLAUDE.md` at the repo
+root (e.g., `atonra/`). Deployed via `install.sh --company <name> --workspace <dir>` which
+symlinks the company CLAUDE.md to the workspace root. Claude Code walks up directories, so
+all projects under that workspace inherit company conventions automatically. Open/Closed
+principle: the company file is closed for modification, projects extend via their own CLAUDE.md.
+Company-specific skills live in `<name>/skills/` and agents in `<name>/agents/`, both
+symlinked into the global directories at install time.
 
 ## Three-layer CLAUDE.md hierarchy
 Layer 1 (Personal): `~/.claude/CLAUDE.md` — tech-agnostic preferences, loaded everywhere.

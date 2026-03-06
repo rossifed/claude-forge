@@ -39,30 +39,80 @@ The company file is never copied or edited per project — Open/Closed principle
         CLAUDE.md               Global preferences (Layer 1, symlinked to ~/.claude/)
         DECISIONS.md            Rationale behind each choice
         install.sh              Deployment script with company profile support
-        agents/                 Symlinked to ~/.claude/agents/
+        agents/                 Symlinked to ~/.claude/agents/ (generic agents)
             forge-master.md
-        skills/                 Symlinked to ~/.claude/skills/
+        skills/                 Symlinked to ~/.claude/skills/ (generic skills)
             instruction-writing/
                 SKILL.md
-        companies/              Company profiles (opt-in via --company flag)
-            atonra/
-                CLAUDE.md       Company-wide mandates only (Layer 2)
-                skills/
-                    python.md           Python/FastAPI/SQLAlchemy conventions (auto-activates)
-                    typescript-react.md TypeScript/React/TanStack conventions (auto-activates)
-                    data-orchestration.md Dagster/dbt pipeline conventions (auto-activates)
-                    fintech.md          Financial data handling (domain skill)
-                    scaffold/           Project bootstrapping (/scaffold command)
-                        SKILL.md
+            postgresql.md       PostgreSQL patterns (generic)
+        atonra/                 Company profile (opt-in via --company flag)
+            CLAUDE.md           Company-wide mandates only (Layer 2)
+            agents/             Symlinked individually into agents/ at install time
+                data-engineer.md
+            skills/             Symlinked individually into skills/ at install time
+                python.md           Python/FastAPI/SQLAlchemy conventions
+                typescript-react.md TypeScript/React/TanStack conventions
+                data-orchestration.md Dagster/dbt pipeline conventions
+                fintech.md          Financial data handling
+                timescaledb.md      TimescaleDB patterns (Atonra stack)
+                data-modeling.md    Atonra DB modeling conventions
+                scaffold/           Project bootstrapping (/scaffold command)
+                    SKILL.md
         feedback/               Behavioral flags (captured via /flag, processed via /review-flags)
             processed/          Flags already turned into instruction improvements
         memory/                 Agent memory (versioned, not symlinked)
 
+## Devcontainer Deployment (Portable)
+
+For portable, reproducible environments across machines, use the devcontainer approach
+instead of symlinks. Based on the [official Anthropic devcontainer reference](https://code.claude.com/docs/en/devcontainer).
+
+### Prerequisites
+
+- Docker installed on the machine
+- VS Code with [Dev Containers extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers)
+- `claude-forge` cloned to `~/dev/claude-forge` (or set `CLAUDE_FORGE_DIR` env var)
+- `ANTHROPIC_API_KEY` set in your shell profile
+
+### Initialize a project
+
+    ./install.sh --init-devcontainer ~/dev/my-project
+    ./install.sh --init-devcontainer ~/dev/my-project --company atonra
+
+This copies `.devcontainer/` into your project with:
+- **Dockerfile**: Node.js 20 + Claude Code + ZSH + security tools
+- **devcontainer.json**: bind-mounts forge config (CLAUDE.md, skills, agents) from your host
+- **init-firewall.sh**: restricts outbound network to Claude API, GitHub, npm only
+
+### How it works
+
+    Host machine                          Container
+    ─────────────────────────────────     ─────────────────────────────────
+    ~/dev/claude-forge/CLAUDE.md    ───►  /home/node/.claude/CLAUDE.md
+    ~/dev/claude-forge/skills/      ───►  /home/node/.claude/skills/
+    ~/dev/claude-forge/agents/      ───►  /home/node/.claude/agents/
+    ~/dev/my-project/               ───►  /workspace/
+
+Forge files are bind-mounted read-only. Edit them on the host, changes are instant inside the container.
+
+### Usage
+
+    cd ~/dev/my-project
+    # VS Code: "Reopen in Container"
+    # Or CLI: devcontainer up --workspace-folder .
+
+### On a new machine
+
+    git clone https://github.com/rossifed/claude-forge.git ~/dev/claude-forge
+    export ANTHROPIC_API_KEY=sk-...
+    # Open any project with .devcontainer/ → everything just works
+
 ## Adding a Company Profile
 
-    mkdir -p companies/mycompany/skills
-    # Create companies/mycompany/CLAUDE.md with company conventions
-    # Add company-specific skills in companies/mycompany/skills/
+    mkdir -p mycompany/skills mycompany/agents
+    # Create mycompany/CLAUDE.md with company conventions
+    # Add company-specific skills in mycompany/skills/
+    # Add company-specific agents in mycompany/agents/
     ./install.sh --company mycompany --workspace ~/work
 
 ## Usage

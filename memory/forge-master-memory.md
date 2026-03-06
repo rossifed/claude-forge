@@ -24,6 +24,9 @@ This file is maintained by the forge-master agent. Do not edit manually unless c
 - Delegating work back (2026-03-05): Claude says "don't forget to update X" instead of making the change. Addressed by "Do the work, do not delegate it back" instruction.
 - Blind debugging (2026-03-05): Claude retries same failed approach on errors without diagnosing root cause. Addressed by "Debug with a hypothesis" instruction.
 
+## Architecture decisions
+- 2026-03-05: Portability strategy for claude-forge across two machines. Evaluated three strategies (bake into image, bind-mount, auto-clone at startup). Chose Strategy 2 (bind-mount forge repo into devcontainers). Rationale: preserves instant feedback loop for config iteration, no rebuild tax, no registry needed, install.sh works as postCreateCommand inside containers. Key implementation notes: mount path must be consistent across machines (convention or env var), postCreateCommand runs install.sh with --company/--workspace pointing to container paths.
+
 ## Review history
 - 2026-03-04: Reviewed Fundy CLAUDE.md (originally Copilot instructions). Identified 8 WARNING-level issues (noise/defaults/vagueness), 1 CRITICAL (wrong target tool), 2 INFO. Proposed company-wide atonra_claude.md with three approaches (A: thin company/fat project, B: company+skills, C: self-contained). Recommended starting with C, migrating to B. Drafted both company-wide and project-specific files. Awaiting user decisions on approach, file location, and accuracy of inferred conventions.
 - 2026-03-04: Applied behavioral fixes for 3 recurring issues (supervised mode chaining, Dagster code coupling, reference pattern divergence). Edits placed in personal CLAUDE.md (issues 1 & 3) and atonra_claude.md (issue 2).
