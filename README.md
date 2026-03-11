@@ -1,143 +1,62 @@
 # claude-forge
 
-Global Claude Code configuration: preferences, skills, agents, and their supporting files.
-Single source of truth for how Claude works across all projects.
+Personal Claude Code configuration: preferences, skills, and company conventions.
+Single source of truth, symlinked into place.
 
 ## Installation
 
-    git clone https://github.com/rossifed/claude-forge.git ~/claude-forge
-    cd ~/claude-forge
-    chmod +x install.sh
+```bash
+git clone https://github.com/rossifed/claude-forge.git ~/claude-forge
+cd ~/claude-forge
+./setup.sh --workspace ~/dev
+```
 
-Base install (personal preferences only):
+This creates:
 
-    ./install.sh
-
-With a company profile (e.g., Atonra conventions deployed to your workspace):
-
-    ./install.sh --company atonra --workspace ~/dev
-
-See available profiles:
-
-    ./install.sh --help
+| Symlink | Target | Purpose |
+|---|---|---|
+| `~/.claude/CLAUDE.md` | `CLAUDE.md` | Personal preferences (always loaded) |
+| `~/.claude/skills/` | `skills/` | Global skills (loaded on demand) |
+| `<workspace>/atonra/CLAUDE.md` | `atonra/CLAUDE.md` | Company conventions (loaded for projects under workspace) |
 
 ## How Layering Works
 
-Claude Code walks up the directory tree loading every `CLAUDE.md` it finds.
-This gives you automatic layering with zero copying:
+Claude Code walks up the directory tree loading every `CLAUDE.md` it finds:
 
-    Layer 1 (Personal):   ~/.claude/CLAUDE.md          ← always loaded
-    Layer 2 (Company):    ~/dev/CLAUDE.md               ← loaded for all projects under ~/dev/
-    Layer 3 (Project):    ~/dev/my-project/CLAUDE.md    ← project-specific, versioned in project repo
-
-Each layer is a symlink to this repo (Layers 1-2) or a standalone file (Layer 3).
-The company file is never copied or edited per project — Open/Closed principle.
+```
+Layer 1 (Personal):   ~/.claude/CLAUDE.md              ← always loaded
+Layer 2 (Company):    ~/dev/atonra/CLAUDE.md            ← loaded for projects under ~/dev/
+Layer 3 (Project):    ~/dev/my-project/CLAUDE.md        ← project-specific, versioned in project repo
+```
 
 ## Structure
 
-    claude-forge/
-        CLAUDE.md               Global preferences (Layer 1, symlinked to ~/.claude/)
-        DECISIONS.md            Rationale behind each choice
-        install.sh              Deployment script with company profile support
-        agents/                 Symlinked to ~/.claude/agents/ (generic agents)
-            forge-master.md
-        skills/                 Symlinked to ~/.claude/skills/ (generic skills)
-            instruction-writing/
-                SKILL.md
-            postgresql.md       PostgreSQL patterns (generic)
-        atonra/                 Company profile (opt-in via --company flag)
-            CLAUDE.md           Company-wide mandates only (Layer 2)
-            agents/             Symlinked individually into agents/ at install time
-                data-engineer.md
-            skills/             Symlinked individually into skills/ at install time
-                python.md           Python/FastAPI/SQLAlchemy conventions
-                typescript-react.md TypeScript/React/TanStack conventions
-                data-orchestration.md Dagster/dbt pipeline conventions
-                fintech.md          Financial data handling
-                timescaledb.md      TimescaleDB patterns (Atonra stack)
-                data-modeling.md    Atonra DB modeling conventions
-                scaffold/           Project bootstrapping (/scaffold command)
-                    SKILL.md
-        feedback/               Behavioral flags (captured via /flag, processed via /review-flags)
-            processed/          Flags already turned into instruction improvements
-        memory/                 Agent memory (versioned, not symlinked)
+```
+claude-forge/
+├── CLAUDE.md                      ← personal preferences → ~/.claude/CLAUDE.md
+├── setup.sh                       ← deployment script (symlinks)
+├── skills/
+│   └── skills-builder/
+│       └── SKILL.md               ← skill for writing skills and instructions
+├── atonra/
+│   ├── CLAUDE.md                  ← company conventions → <workspace>/atonra/CLAUDE.md
+│   └── skills/                    ← company-specific skills (created on demand)
+└── README.md
+```
 
-## Devcontainer Deployment (Portable)
+## Philosophy
 
-For portable, reproducible environments across machines, use the devcontainer approach
-instead of symlinks. Based on the [official Anthropic devcontainer reference](https://code.claude.com/docs/en/devcontainer).
+- **CLAUDE.md for directives, skills for knowledge.** CLAUDE.md tells Claude *how to behave*. Skills teach Claude *domain expertise*.
+- **Skills are generic best practices.** Company/project specifics go in CLAUDE.md files, not skills.
+- **YAGNI.** Skills are created when needed, not anticipated. Use `/skills-builder` to create them.
+- **Self-improving.** Claude is instructed to flag recurring behavioral gaps and propose new instructions or skills.
 
-### Prerequisites
+## Creating Skills
 
-- Docker installed on the machine
-- VS Code with [Dev Containers extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers)
-- `claude-forge` cloned to `~/dev/claude-forge` (or set `CLAUDE_FORGE_DIR` env var)
-- `ANTHROPIC_API_KEY` set in your shell profile
+Use the built-in skills-builder:
 
-### Initialize a project
+```
+/skills-builder I need a skill for Python async patterns
+```
 
-    ./install.sh --init-devcontainer ~/dev/my-project
-    ./install.sh --init-devcontainer ~/dev/my-project --company atonra
-
-This copies `.devcontainer/` into your project with:
-- **Dockerfile**: Node.js 20 + Claude Code + ZSH + security tools
-- **devcontainer.json**: bind-mounts forge config (CLAUDE.md, skills, agents) from your host
-- **init-firewall.sh**: restricts outbound network to Claude API, GitHub, npm only
-
-### How it works
-
-    Host machine                          Container
-    ─────────────────────────────────     ─────────────────────────────────
-    ~/dev/claude-forge/CLAUDE.md    ───►  /home/node/.claude/CLAUDE.md
-    ~/dev/claude-forge/skills/      ───►  /home/node/.claude/skills/
-    ~/dev/claude-forge/agents/      ───►  /home/node/.claude/agents/
-    ~/dev/my-project/               ───►  /workspace/
-
-Forge files are bind-mounted read-only. Edit them on the host, changes are instant inside the container.
-
-### Usage
-
-    cd ~/dev/my-project
-    # VS Code: "Reopen in Container"
-    # Or CLI: devcontainer up --workspace-folder .
-
-### On a new machine
-
-    git clone https://github.com/rossifed/claude-forge.git ~/dev/claude-forge
-    export ANTHROPIC_API_KEY=sk-...
-    # Open any project with .devcontainer/ → everything just works
-
-## Adding a Company Profile
-
-    mkdir -p mycompany/skills mycompany/agents
-    # Create mycompany/CLAUDE.md with company conventions
-    # Add company-specific skills in mycompany/skills/
-    # Add company-specific agents in mycompany/agents/
-    ./install.sh --company mycompany --workspace ~/work
-
-## Usage
-
-Work normally with Claude Code. Your CLAUDE.md is loaded every session.
-
-To create or audit instruction files, call the forge-master agent:
-    @forge-master review my CLAUDE.md
-    @forge-master I need a skill for Python async patterns
-
-## Feedback Loop
-
-When Claude behaves incorrectly in any project, flag it in-context:
-
-    /flag Claude created 5 files when I asked for structure only
-
-This captures a structured incident report to `feedback/` using the session context
-Claude already has. Periodically, process accumulated flags into instruction improvements:
-
-    /review-flags
-
-This groups flags by category, cross-references existing instructions, and proposes
-specific changes. See DECISIONS.md for the design rationale.
-
-## Maintenance
-
-Update when Claude repeatedly does something wrong that current instructions do not prevent.
-See DECISIONS.md for rationale behind each choice.
+Or ask Claude to create one — the skills-builder auto-activates when the task involves writing Claude Code configuration.

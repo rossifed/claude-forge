@@ -1,47 +1,34 @@
 # Atonra Engineering Conventions
 
-> Company-wide mandates only. Technology-specific conventions (Python, TypeScript,
-> data pipelines) are managed as skills that auto-activate based on project context.
->
-> Project-specific directives belong in each project's own `CLAUDE.md`.
-
----
+> Company-wide mandates only. Technology-specific conventions are managed as skills. Project-specific directives belong in each project's own `CLAUDE.md`.
 
 ## Architecture
 
 - Microservice boundaries are strict: no imports across service boundaries.
 - Inter-service communication: HTTP APIs only.
-- Shared code goes in a dedicated shared module — never duplicate code across services.
+- Shared code goes in a dedicated shared module — never duplicate across services, extract to shared instead.
 - BFF pattern for authentication: tokens stored in HTTP-only cookies, never exposed to frontend JS.
 
 ## Git
 
-- Commit messages validated by commitizen pre-commit hook.
-- Pre-commit hooks: trailing-whitespace fix, end-of-file-fixer, YAML validation, large file check (max 2MB), ruff check + format (auto-fix).
+- Pre-commit hooks are enforced: commitizen (commit message format), ruff (lint + format), trailing-whitespace, end-of-file-fixer, YAML validation, large file check (2MB). Do not bypass them — fix the underlying issue instead.
 
 ## Secrets
 
-- **Encryption:** SOPS for `.env.secrets` files (PGP keys)
-- **Auto-decryption:** direnv (`.envrc`) on directory entry
+- Encrypt secrets with SOPS (`.env.secrets` files, PGP keys) — never commit plaintext secrets.
+- Auto-decryption via direnv (`.envrc`) on directory entry.
 
-## CI/CD
+## CI/CD & Infrastructure
 
-- **CI:** GitHub Actions (lint, type-check, test, build, deploy)
-- **Container registry:** ghcr.io
-- **Pipeline deployments:** Dagster Cloud
-- **Kubernetes deployments:** ArgoCD (GitOps)
-- **Infrastructure:** Terraform (AWS)
-- **Docs:** MkDocs -> GitHub Pages
+- CI: GitHub Actions. Container registry: ghcr.io. K8s deployments: ArgoCD (GitOps). Infra: Terraform (AWS). Pipelines: Dagster Cloud.
+- When creating CI workflows, Docker images, or deployment configs, use these tools — do not suggest alternatives.
 
 ## Observability
 
-- **Tracing:** OpenTelemetry (OTLP gRPC)
-- **Metrics:** Prometheus + Grafana
-- **Error tracking:** Sentry
-- **Logging:** structured (JSON), never log sensitive data
+- Tracing: OpenTelemetry (OTLP gRPC). Metrics: Prometheus + Grafana. Errors: Sentry.
+- Logging must be structured (JSON) — never log sensitive data, redact or omit instead.
 
 ## Development Environment
 
-- All services must be runnable via `docker compose up`
-- MkDocs with Material theme for documentation
-- New features require documentation before merge
+- All services must be runnable via `docker compose up`.
+- Documentation: MkDocs with Material theme → GitHub Pages. New features require documentation before merge.

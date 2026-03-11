@@ -1,5 +1,6 @@
 # Local dev
 .env
+SESSION.md
 
 # OS
 .DS_Store
