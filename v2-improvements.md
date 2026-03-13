@@ -363,6 +363,113 @@ When the plan is created collaboratively (Phase 1), the human provides the desig
 
 ---
 
+## 12. Design-First Implementation instruction in CLAUDE.md
+
+**Problem:** Claude knows DDD, SOLID, clean architecture, hexagonal — it can explain them perfectly. But it doesn't APPLY them by default because:
+- The shortest path wins: one file with router + model + logic is faster than proper separation
+- Without architectural context, Claude defaults to simplicity (often correct, but not for complex domains)
+- The prompt drives behavior: "create an endpoint" → one endpoint, not a decomposed design
+- Claude doesn't distinguish between a throwaway script and an enterprise service
+
+The Design Review (item 9) catches problems AFTER implementation. This item changes the approach BEFORE implementation — design interfaces first, then implement.
+
+**Change:** add to `CLAUDE.md` in Problem-Solving section:
+
+```markdown
+## Design-First Implementation
+- When creating new modules or services, design the interfaces (ports/contracts) BEFORE writing
+  the implementation. Show the interfaces, get approval, then implement.
+- When the project has an architecture structure skill loaded, follow it strictly. Every new file
+  must be placed in the correct layer. Every import must respect dependency rules. Do not take
+  shortcuts "to make it work faster."
+- When asked to implement a feature that spans multiple responsibilities, decompose it into
+  domain objects, application services, and infrastructure adapters BEFORE writing code.
+  Show the decomposition for validation.
+```
+
+This changes Claude's mental sequence:
+- Before: request → code → done
+- After: request → decomposition → interfaces → validation → code → design review → done
+
+**Challenge this:** this adds overhead to every feature. For simple tasks (add a field, fix a bug), the decomposition step is overkill. Consider scoping: "When creating new modules or services" already limits the trigger. But test whether Claude actually applies the scoping or treats every task as requiring decomposition.
+
+---
+
+## 13. Architecture analysis skill (create via /skills-builder when needed)
+
+**Problem:** for large legacy refactoring, Claude needs a structured WORKFLOW for analyzing existing code — not more knowledge (it already knows DDD/SOLID), but a step-by-step process that forces analysis before action and requires human validation at the right moments.
+
+**This is NOT a file to create now.** Document it here as a skill to create via `/skills-builder` when a real refactoring project starts. YAGNI applies.
+
+**When to create:** when you start a refactoring project on an existing codebase with significant coupling.
+
+**Proposed skill spec for `/skills-builder`:**
+
+```markdown
+---
+name: architecture-analysis
+description: "Analyze existing codebase architecture — extract bounded contexts, map dependencies,
+identify coupling, propose refactoring strategy"
+user-invocable: true
+argument-hint: "path to analyze"
+---
+```
+
+**Workflow the skill should encode:**
+
+### Step 1 — Dependency map
+- Read project structure, build module dependency graph
+- For each module: what it imports, what imports it
+- Identify circular dependencies
+- Output: dependency matrix as a table
+
+### Step 2 — Responsibility analysis
+- For each module, identify its responsibilities (what it does, not how)
+- Flag modules with multiple responsibilities (god classes/modules)
+- Flag modules that mix layers (business logic + DB access + HTTP handling in same file)
+- Output: responsibility table with violations flagged
+
+### Step 3 — Bounded context extraction
+- Group modules by functional cohesion (what changes together)
+- Cross-reference with git history: `git log --format=format: --name-only | sort | uniq -c | sort -rn` (files that change together are likely in the same context)
+- Propose bounded contexts with: name, purpose, current modules, dependencies on other contexts
+- **STOP HERE and wait for human validation** — bounded context decisions require domain knowledge that Claude cannot infer from code alone
+
+### Step 4 — Target architecture
+- For each validated bounded context, propose internal structure (load architecture structure skill)
+- Map current code to target locations (current file → target location)
+- Identify what needs to be created (ports, adapters, value objects)
+- Identify what needs to be split (god classes → focused classes)
+- Output: migration table
+
+### Step 5 — Refactoring plan
+- Order migration steps by dependency (leaf modules first, core last)
+- For each step: action, design constraints, functional verification, design verification, risk level
+- Group into independently refactorable zones
+- Output: ordered plan ready for semi-autonomous execution (one zone at a time)
+
+### Critical rules for this skill
+- NEVER skip Step 3 human validation. Bounded context boundaries are business decisions.
+- NEVER start refactoring before the full plan is approved.
+- Prefer extracting interfaces (ports) as the FIRST refactoring step — it decouples without moving code, minimizing risk.
+- When uncertain about a boundary ("should Orders include Invoicing?"), present tradeoffs and ask.
+
+**Why a skill and not just instructions:** this workflow is too detailed for CLAUDE.md (would add ~50 lines of permanent context). As a skill, it loads only when explicitly invoked for a refactoring project. It encodes process, not knowledge — Claude already knows DDD, the skill just forces the right sequence and mandatory human checkpoints.
+
+**What remains human even with this skill:**
+
+| Claude does well | Human must decide |
+|---|---|
+| Map dependencies from code | Where the real business boundaries are |
+| Identify coupling and god classes | Which coupling is intentional vs accidental |
+| Propose bounded contexts | Validate against domain knowledge |
+| Generate target structure | Validate granularity of services |
+| Write refactoring plan | Approve risk assessment and ordering |
+| Execute refactoring per zone | Review at integration milestones |
+| Write and run tests | Decide what level of coverage is sufficient |
+
+---
+
 ## Order of execution
 
 Apply in this order (each builds on the previous):
@@ -370,14 +477,16 @@ Apply in this order (each builds on the previous):
 1. **Item 2** — delete context files, inline tooling in atonra/CLAUDE.md (smallest blast radius, immediate token savings)
 2. **Item 3** — expand supervised mode (small CLAUDE.md edit)
 3. **Item 9** — add Design Review instruction to CLAUDE.md (small edit, high impact)
-4. **Item 4** — create LESSONS.md + update Self-Improvement instruction
-5. **Item 8** — move MCP naming convention
-6. **Item 10** — add architecture standards directive to atonra/CLAUDE.md (short directive only — create the actual structure skills later via /skills-builder when starting a real project, YAGNI)
-7. **Item 7** — setup.sh improvements
-8. **Item 1** — skills-builder pre-filtering (the biggest change, benefits from items 1-6 being done first)
-9. **Item 5** — split skills-builder into companion files (do after item 8 so the final content is stable)
-10. **Item 6** — document hook escalation trigger in ARCHITECTURE.md and LESSONS.md
-11. **Item 11** — document enriched plan format in ARCHITECTURE.md (no code, just documentation)
+4. **Item 12** — add Design-First Implementation instruction to CLAUDE.md (complements item 9)
+5. **Item 4** — create LESSONS.md + update Self-Improvement instruction
+6. **Item 8** — move MCP naming convention
+7. **Item 10** — add architecture standards directive to atonra/CLAUDE.md (short directive only — create the actual structure skills later via /skills-builder when starting a real project, YAGNI)
+8. **Item 7** — setup.sh improvements
+9. **Item 1** — skills-builder pre-filtering (the biggest change, benefits from items 1-7 being done first)
+10. **Item 5** — split skills-builder into companion files (do after item 9 so the final content is stable)
+11. **Item 6** — document hook escalation trigger in ARCHITECTURE.md and LESSONS.md
+12. **Item 11** — document enriched plan format in ARCHITECTURE.md (no code, just documentation)
+13. **Item 13** — DO NOT create now. Document in ARCHITECTURE.md as a deferred skill. Create via /skills-builder when a real refactoring project starts.
 
 After all changes, run the skills-builder's own audit checklist against every modified file to verify consistency.
 
