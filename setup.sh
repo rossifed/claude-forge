@@ -3,18 +3,23 @@ set -euo pipefail
 
 FORGE_DIR="$(cd "$(dirname "$0")" && pwd)"
 CLAUDE_DIR="$HOME/.claude"
+WORKSPACE=""
 
 usage() {
-    echo "Usage: $0 --workspace <path>"
+    echo "Usage: $0 [--workspace <path>]"
     echo ""
     echo "Deploy claude-forge symlinks."
     echo ""
-    echo "  --workspace <path>  Root directory for company workspaces (e.g. ~/dev)"
+    echo "Options:"
+    echo "  --workspace <path>  Workspace root for company layer (e.g., ~/dev)"
     echo ""
     echo "Creates:"
-    echo "  ~/.claude/CLAUDE.md        → forge CLAUDE.md (personal preferences)"
-    echo "  ~/.claude/skills/          → forge skills/ (including atonra/)"
-    echo "  <workspace>/atonra/CLAUDE.md → forge atonra/CLAUDE.md (company conventions)"
+    echo "  ~/.claude/CLAUDE.md    → forge CLAUDE.md (personal preferences)"
+    echo "  ~/.claude/skills/      → forge skills/"
+    echo ""
+    echo "With --workspace <path>:"
+    echo "  <path>/atonra/CLAUDE.md  → forge atonra/CLAUDE.md (company conventions)"
+    echo "  <path>/atonra/context/   → forge atonra/context/ (infrastructure context)"
     exit 1
 }
 
@@ -45,8 +50,6 @@ safe_link() {
     ln -s "$source" "$target"
 }
 
-WORKSPACE=""
-
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --workspace)
@@ -63,14 +66,6 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [ -z "$WORKSPACE" ]; then
-    echo "Error: --workspace is required."
-    echo ""
-    usage
-fi
-
-WORKSPACE="$(cd "$WORKSPACE" && pwd)"
-
 echo "Deploying claude-forge from $FORGE_DIR"
 echo ""
 
@@ -81,9 +76,12 @@ echo ""
 echo "Skills:"
 safe_link "$FORGE_DIR/skills" "$CLAUDE_DIR/skills"
 
-echo ""
-echo "Atonra company layer:"
-safe_link "$FORGE_DIR/atonra/CLAUDE.md" "$WORKSPACE/atonra/CLAUDE.md"
+if [ -n "$WORKSPACE" ]; then
+    echo ""
+    echo "Company layer (Atonra):"
+    safe_link "$FORGE_DIR/atonra/CLAUDE.md" "$WORKSPACE/atonra/CLAUDE.md"
+    safe_link "$FORGE_DIR/atonra/context" "$WORKSPACE/atonra/context"
+fi
 
 echo ""
 echo "Done."

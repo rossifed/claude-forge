@@ -12,6 +12,7 @@
 - Start minimal, iterate up. Begin with the simplest working version; expand only when asked.
 - Do the work, do not delegate it back. Never say "don't forget to update X" — if you can do it, do it.
 - Debug with a hypothesis. Read the full error, state your diagnosis before touching code. If a fix fails, reassess from the new error output — do not retry the same approach.
+- During long analysis sessions, write intermediate results to files immediately. Keep only summaries and deltas in conversation.
 
 ## Work Modes
 At the start of each session or complex task, ask which mode applies:

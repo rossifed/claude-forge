@@ -2,14 +2,14 @@
 
 ## Vision
 
-claude-forge is a personal Claude Code configuration system. It separates concerns (behavior vs knowledge vs company conventions), optimizes token usage (lean CLAUDE.md + on-demand skills), maximizes compliance (audited instructions), and is reusable across projects and machines via symlinks.
+claude-forge is a personal Claude Code configuration system. It separates concerns (behavior vs knowledge), optimizes token usage (lean CLAUDE.md + on-demand skills), maximizes compliance (audited instructions), and is reusable across projects and machines via symlinks.
 
 ## Philosophy
 
 - **Claude + skills, not agents.** Agents are justified only for autonomy (background) or multi-agent collaboration. Skills cover everything else.
 - **YAGNI strict.** Every file exists to answer a real need, not an anticipated one. Skills are created on demand when a pattern is observed, not pre-built.
 - **Skills = generic best practices.** Community-level knowledge any team could use. Company/project specifics go in CLAUDE.md files.
-- **Directives in CLAUDE.md, knowledge in skills.** No collision possible — CLAUDE.md says how to behave, skills teach domain expertise.
+- **Directives in CLAUDE.md, knowledge in skills.** CLAUDE.md says how to behave, skills teach domain expertise. `@` includes in CLAUDE.md provide factual context when no on-demand mechanism is available at the right scope.
 - **Eat your own dog food.** The skills-builder is used to build and audit all forge files, including itself.
 
 ## Architecture
@@ -18,11 +18,15 @@ claude-forge is a personal Claude Code configuration system. It separates concer
 
 ```
 Layer 1 (Personal):   ~/.claude/CLAUDE.md              ← always loaded
-Layer 2 (Company):    <workspace>/atonra/CLAUDE.md      ← loaded for projects under workspace
+Layer 2 (Company):    <workspace>/atonra/CLAUDE.md      ← company conventions + @context includes
 Layer 3 (Project):    <project>/CLAUDE.md               ← project-specific, versioned in project repo
 ```
 
-Each layer is a symlink to this repo (Layers 1-2) or a standalone file (Layer 3).
+Layer 1 is a symlink to this repo. Layer 2 is a symlink to this repo's `atonra/` directory, deployed via `setup.sh --workspace`. Layer 3 is a standalone file in each project.
+
+**Walk-up loading:** Claude Code walks up the directory tree loading every `CLAUDE.md` it finds. Running Claude in `~/dev/atonra/fundy/` loads all three layers. Only CLAUDE.md benefits from walk-up — rules and skills do not.
+
+**`@` includes:** Layer 2 uses `@context/*.md` to load factual infrastructure context (database topology, pipeline patterns, stack conventions) without bloating the CLAUDE.md file itself.
 
 ### Skills activation
 
@@ -30,12 +34,14 @@ Skills live in `~/.claude/skills/` (symlinked from this repo). Claude auto-activ
 
 ### Deployment
 
-`setup.sh --workspace <path>` creates symlinks. No complex install, no profiles, no devcontainer. Linux first.
+`setup.sh` creates symlinks. No complex install, no profiles, no devcontainer. Linux first.
 
 ## Key Decisions
 
 | Decision | Rationale |
 |---|---|
+| **Three layers with separation of concerns** | Layer 1 = personal preferences. Layer 2 = company directives + `@` includes for infrastructure context. Layer 3 = project-specific. Walk-up loading ensures all layers apply automatically to sub-projects. |
+| **Layer 2 restored with `@` includes** | Originally removed (v2) as too rigid. Rediscovered the need during a DB audit: ~30 min lost on wrong infrastructure assumptions. Only CLAUDE.md walks up — rules and skills don't — so Layer 2 is the only mechanism scoped to all company projects that loads automatically. `@` includes separate directives from factual context. |
 | **skills-builder, not forge-master agent** | An agent adds complexity (isolated context, tool restrictions) without benefit here. A skill that auto-activates when creating/reviewing instructions is simpler and sufficient. |
 | **No hooks-builder** | Hooks are JSON config + shell commands. Claude already knows how to write those. The skills-builder has the hooks doc URL for reference if needed. |
 | **No agent-builder (yet)** | YAGNI. The plan says "agents when skills aren't enough." The skills-builder placement table redirects to agents and can fetch the official docs when needed. |
@@ -67,11 +73,10 @@ Skills live in `~/.claude/skills/` (symlinked from this repo). Claude auto-activ
 
 Revisit when the need is real:
 
-- **Technical skills** (python.md, postgresql.md, etc.) → create via `/skills-builder` when working on a project that needs them
+- **Technical skills** (postgresql.md, timescaledb.md, etc.) → create via `/skills-builder` when working on a project that needs them
 - **Agent-builder** → when `context: fork` in skills isn't enough and a real agent is needed
 - **setup.ps1** (Windows) → when the user changes machine
 - **Devcontainer** → when portability beyond symlinks is needed
-- **Global memory** → if auto memory (per-project) proves insufficient
 
 ## Reload Behavior
 

@@ -11,6 +11,7 @@ Build and audit Claude Code configuration files: skills, CLAUDE.md files, agents
 
 ## Official references
 
+- Memory, CLAUDE.md & rules: https://code.claude.com/docs/en/memory
 - Skills: https://code.claude.com/docs/en/skills
 - Best practices: https://code.claude.com/docs/en/best-practices
 - Hooks: https://code.claude.com/docs/en/hooks-guide
@@ -63,6 +64,47 @@ Build and audit Claude Code configuration files: skills, CLAUDE.md files, agents
 - Target under 200 lines per CLAUDE.md file. Longer files consume more context and reduce adherence.
 - Move reference material to skills (on-demand) or `.claude/rules/` files (path-scoped).
 - CLAUDE.md changes take effect after `/compact` (re-reads from disk). No new session needed.
+- **Walk-up loading:** CLAUDE.md files are loaded by walking up the directory tree from the working directory. Running Claude in `foo/bar/` loads both `foo/bar/CLAUDE.md` and `foo/CLAUDE.md`. Subdirectory CLAUDE.md files load on demand when Claude reads files in those directories.
+- **`@` imports:** `@path/to/file.md` syntax expands and loads the referenced file into context at launch. Relative paths resolve relative to the file containing the import. Max 5 levels of nesting. First encounter in a project shows an approval dialog.
+
+## Rules reference
+
+Rules are markdown files in `.claude/rules/` that keep instructions modular. They can be scoped to specific file patterns.
+
+### Location and loading
+
+| Location | Scope | Loaded |
+|---|---|---|
+| `<project>/.claude/rules/*.md` | Project, shared via git | At launch (or on file match if `paths:` set) |
+| `~/.claude/rules/*.md` | User, all projects | At launch (before project rules) |
+
+- Rules are discovered recursively — subdirectories like `frontend/` or `backend/` are supported.
+- Rules **do not walk up** the directory tree — unlike CLAUDE.md, they are scoped to their project.
+- Symlinks are supported for cross-project sharing: `ln -s ~/shared-rules .claude/rules/shared`.
+
+### Path-specific rules
+
+Use `paths` frontmatter to load rules only when Claude works with matching files:
+
+```markdown
+---
+paths:
+  - "src/api/**/*.ts"
+  - "**/*.sql"
+---
+```
+
+Rules without `paths` frontmatter load unconditionally at launch.
+
+### When to use rules vs other mechanisms
+
+| Need | Use |
+|---|---|
+| Instructions scoped to file patterns | `.claude/rules/` with `paths` frontmatter |
+| Factual context shared across projects | `@` import in a walk-up CLAUDE.md |
+| On-demand domain knowledge | Skill |
+| Permanent directive for all company projects | Company CLAUDE.md (walk-up layer) |
+| Enforcement with zero tolerance | Hook |
 
 ## Skills reference
 
