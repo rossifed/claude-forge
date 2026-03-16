@@ -40,6 +40,12 @@
 
 @context/database-topology.md
 @context/dagster-patterns.md
+@context/data-knowledge.md
+
+## Data Knowledge
+- When you discover data knowledge during exploration (source mappings, join paths, pitfalls, value formats, edge cases), propose updating `context/data-knowledge.md` with the finding. Show what you intend to add and wait for confirmation before writing.
+- After writing, show the change made.
+- Keep entries factual and concise — future sessions depend on this file.
 
 ## Stack Conventions
 
