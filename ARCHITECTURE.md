@@ -28,6 +28,8 @@ Layer 1 is a symlink to this repo. Layer 2 is a symlink to this repo's `atonra/`
 
 **`@` includes:** Layer 2 uses `@context/*.md` to load factual infrastructure context (database topology, pipeline patterns, stack conventions) without bloating the CLAUDE.md file itself.
 
+**Commands:** Slash commands live in `<org>/commands/` in the forge repo, symlinked to `<workspace>/<org>/.claude/commands/`. This makes them available in all sub-projects via walk-up, versioned in forge, and distributable via `setup.sh`.
+
 ### Skills activation
 
 Skills live in `~/.claude/skills/` (symlinked from this repo). Claude auto-activates them based on the `description` field keyword matching. The skills-builder is the only skill shipped — others are created on demand.
@@ -51,6 +53,8 @@ Skills live in `~/.claude/skills/` (symlinked from this repo). Claude auto-activ
 | **CLAUDE.md under 200 lines** | Official Anthropic recommendation. Longer files reduce adherence. Reference material goes in skills (on-demand) or `.claude/rules/` (path-scoped). |
 | **WebFetch for doc alignment** | Skills-builder embeds essential best practices but proposes fetching official docs before creating/updating skills. Handles staleness without bloating the skill. |
 | **Feedback integrated, not separate** | No `/flag` or `/review-flags`. Self-improvement instruction in CLAUDE.md: Claude proposes new instructions or skills when it notices recurring gaps. Direct correction in conversation. |
+| **Forge-awareness is global, org context is derived** | Claude must always modify forge-managed files in the forge repo, not at symlink targets. This knowledge lives in Layer 1 (global). Which org subfolder to use is derived from the currently loaded Layer 2 context. |
+| **Commands symlinked at org level** | Commands in `<org>/commands/` are symlinked to `<workspace>/<org>/.claude/commands/`. Walk-up loading makes them available to all sub-projects. Versioned in forge, deployed via `setup.sh`. |
 | **No auto-commit** | Claude informs that forge files changed, proposes a Conventional Commits message, waits for user confirmation. |
 | **Supervised mode: hook as next escalation** | If supervised mode is violated 2+ times after v2 compression, create a PreToolUse hook blocking action chaining. Do not reword instructions — that approach was exhausted in v1 (3 escalations). |
 

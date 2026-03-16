@@ -48,3 +48,10 @@ At the start of each session or complex task, ask which mode applies:
 ## Context Persistence
 - Maintain a SESSION.md at the project root (in .gitignore). Track: current task, files modified, key decisions, pending TODOs, work mode.
 - Update SESSION.md after each significant action. Re-read it after any context compaction.
+
+## Forge Awareness
+This CLAUDE.md is managed by **claude-forge** — a configuration repo that is the source of truth for all Claude Code instructions, skills, commands, and context files. Forge files are deployed as symlinks.
+- **NEVER modify forge-managed files at the symlink target.** Always modify them in the forge repo. Resolve the forge repo path from: `readlink -f ~/.claude/CLAUDE.md | xargs dirname`.
+- Forge-managed assets: `CLAUDE.md` (all layers), `skills/`, `commands/`, `context/`.
+- When creating or editing commands, context, or skills for a company/org, use the currently loaded Layer 2 to determine which subfolder applies (e.g., if `atonra/CLAUDE.md` is loaded → write to `claude-forge/atonra/`).
+- After modifying forge files, show the changes and propose a commit to the forge repo.

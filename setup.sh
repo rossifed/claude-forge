@@ -18,8 +18,9 @@ usage() {
     echo "  ~/.claude/skills/      → forge skills/"
     echo ""
     echo "With --workspace <path>:"
-    echo "  <path>/atonra/CLAUDE.md  → forge atonra/CLAUDE.md (company conventions)"
-    echo "  <path>/atonra/context/   → forge atonra/context/ (infrastructure context)"
+    echo "  <path>/atonra/CLAUDE.md    → forge atonra/CLAUDE.md (company conventions)"
+    echo "  <path>/atonra/context/     → forge atonra/context/ (infrastructure context)"
+    echo "  <path>/atonra/.claude/commands/ → forge atonra/commands/ (shared commands)"
     exit 1
 }
 
@@ -81,6 +82,7 @@ if [ -n "$WORKSPACE" ]; then
     echo "Company layer (Atonra):"
     safe_link "$FORGE_DIR/atonra/CLAUDE.md" "$WORKSPACE/atonra/CLAUDE.md"
     safe_link "$FORGE_DIR/atonra/context" "$WORKSPACE/atonra/context"
+    safe_link "$FORGE_DIR/atonra/commands" "$WORKSPACE/atonra/.claude/commands"
 fi
 
 echo ""
