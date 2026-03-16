@@ -52,6 +52,7 @@ Skills live in `~/.claude/skills/` (symlinked from this repo). Claude auto-activ
 | **WebFetch for doc alignment** | Skills-builder embeds essential best practices but proposes fetching official docs before creating/updating skills. Handles staleness without bloating the skill. |
 | **Feedback integrated, not separate** | No `/flag` or `/review-flags`. Self-improvement instruction in CLAUDE.md: Claude proposes new instructions or skills when it notices recurring gaps. Direct correction in conversation. |
 | **No auto-commit** | Claude informs that forge files changed, proposes a Conventional Commits message, waits for user confirmation. |
+| **Supervised mode: hook as next escalation** | If supervised mode is violated 2+ times after v2 compression, create a PreToolUse hook blocking action chaining. Do not reword instructions — that approach was exhausted in v1 (3 escalations). |
 
 ## What Was Removed (and Why)
 

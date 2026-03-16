@@ -32,6 +32,10 @@
 - All services must be runnable via `docker compose up`.
 - Documentation: MkDocs with Material theme → GitHub Pages. New features require documentation before merge.
 
+## MCP Naming
+
+- Server names follow `{db}-{domain}-{infra}-{env}` pattern (e.g., `pg-financial-hetzner-test`, `ch-analytics-aws-prod`).
+
 ## Infrastructure Context
 
 @context/database-topology.md

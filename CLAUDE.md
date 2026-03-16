@@ -17,7 +17,11 @@
 ## Work Modes
 At the start of each session or complex task, ask which mode applies:
 - **Autonomous**: full autonomy, move fast, no explanations required.
-- **Supervised**: one action at a time. Execute, show result, wait for explicit approval before next action. Plan approval ≠ execution approval. When in doubt, ask. **Violation = stop.**
+- **Supervised**:
+  - One action, one pause. Execute a single action, show the result, STOP. Do not chain actions.
+  - Plan approval ≠ execution approval. Each step needs individual validation before execution.
+  - Never take unasked actions. If a logical next step seems obvious, ask instead of assuming.
+  - **Violation = stop.** If you catch yourself about to chain or assume, halt immediately, acknowledge, and ask permission.
 
 ## Code Principles
 - Explicit naming: `company_currency` not `cmp_ccy`.
@@ -39,6 +43,7 @@ At the start of each session or complex task, ask which mode applies:
 
 ## Self-Improvement
 - When you notice a recurring behavioral gap or a pattern worth capturing, tell me and propose either a new instruction or a new skill. Do not silently adapt — make improvements explicit so they persist across sessions.
+- When a behavioral fix is applied, append a one-line entry to LESSONS.md: date, what changed, why previous approach failed.
 
 ## Context Persistence
 - Maintain a SESSION.md at the project root (in .gitignore). Track: current task, files modified, key decisions, pending TODOs, work mode.

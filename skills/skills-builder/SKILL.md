@@ -28,10 +28,11 @@ Build and audit Claude Code configuration files: skills, CLAUDE.md files, agents
 
 1. **Understand the need.** Ask what behavior the user wants. Use the placement decision tree to identify where it belongs.
 2. **Propose alignment check.** Offer to fetch official docs before drafting (see "When to consult official docs").
-3. **Draft.** Write the content following the principles below.
-4. **Validate frontmatter.** Check: `name` is lowercase/hyphens/max 64 chars, `description` is present, boolean fields use `true`/`false` (not strings), no unknown fields.
-5. **Validate content.** Run the audit checklist against every instruction. Check line count (flag at 400+).
-6. **Verify.** Re-read the full file, confirm each instruction passes all 8 checklist points. Suggest the user test activation: "Ask Claude 'What skills are available?' to verify it appears."
+3. **Filter before drafting.** List every instruction you plan to include. For each, ask: "If I delete this, does Claude's behavior change?" Remove non-differentiating content. Cross-reference against existing CLAUDE.md hierarchy and skills to flag redundancy. Show the user what was filtered out and why.
+4. **Draft.** Write the content following the principles below, using only the surviving instructions.
+5. **Validate frontmatter.** Check: `name` is lowercase/hyphens/max 64 chars, `description` is present, boolean fields use `true`/`false` (not strings), no unknown fields.
+6. **Validate content.** Run the audit checklist against every instruction. Check line count (flag at 400+).
+7. **Verify.** Re-read the full file, confirm each instruction passes all 8 checklist points. Suggest the user test activation: "Ask Claude 'What skills are available?' to verify it appears."
 
 ## Placement decision tree
 
