@@ -971,23 +971,6 @@ EXPOSE {{DAGSTER_PORT}}
 CMD ["dagster", "api", "grpc", "-h", "0.0.0.0", "-p", "{{DAGSTER_PORT}}", "-m", "pipelines.definitions"]
 ```
 
-If dbt is selected, add dbt build steps before the CMD:
-```dockerfile
-# Build dbt dependencies and manifest
-RUN PG_HOST=localhost \
-    PG_PORT=5432 \
-    PG_USER=postgres \
-    PG_PASSWORD=postgres \
-    PG_DB=postgres \
-    .venv/bin/dbt deps --project-dir pipelines/dbt_project --profiles-dir pipelines/dbt_project && \
-    PG_HOST=localhost \
-    PG_PORT=5432 \
-    PG_USER=postgres \
-    PG_PASSWORD=postgres \
-    PG_DB=postgres \
-    .venv/bin/dbt parse --project-dir pipelines/dbt_project --profiles-dir pipelines/dbt_project && \
-    test -f pipelines/dbt_project/target/manifest.json
-```
 
 ### Service pyproject.toml
 
