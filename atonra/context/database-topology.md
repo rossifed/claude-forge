@@ -20,7 +20,7 @@ Primary database for all financial data (reference, fundamentals, timeseries).
 - **Temporal versioning:** almost all tables use `temporal_tables` extension — each table has a corresponding `<table>_history` suffix table.
 - **TimescaleDB hypertables:** timeseries data in master schema uses hypertables for partitioning and performance.
 
-### MSSQL — Refinitiv QA
+### SQL Server — Refinitiv QA
 
 Current primary data source for market data. Feeds the financial database.
 
