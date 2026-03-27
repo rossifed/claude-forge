@@ -47,7 +47,13 @@ Refinitiv QA ──(sling)──→ raw ──(dbt)──→ staging ──(dbt)
 
 ## Dual-Load Strategy (volumetric tables)
 
-Large tables (market_data, std_financial_value, estimate_consensus — tens/hundreds of millions of rows) use two loading strategies:
+Large tables (market_data, std_financial_value, estimate_consensus — tens/hundreds of millions of rows) use two loading strategies.
+
+### When to use dual-load vs simple truncate
+
+- **Dual-load (CDC + full):** tables with millions+ rows where a daily full reload would take >10-15 min and stress indexes. Typically timeseries and fact tables that grow daily.
+- **Simple truncate:** reference/dimension tables small enough to reload entirely in seconds (countries, currencies, items, periods, filings). No CDC needed.
+- **Key signal:** if the daily job takes too long because of a table's volume, it's a candidate for CDC.
 
 ### Sling ingestion (raw)
 
