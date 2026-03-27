@@ -81,13 +81,36 @@ Each volumetric table has a `<table>_load` companion in the master schema (SQLAl
 - Records `loaded_at`, `rows_inserted`, `rows_updated`, `rows_deleted`
 - Used by `_changes` views to scope the next incremental load
 
+### CDC setup on source DB
+
+Before CDC can work, change tracking must be enabled on the source table in SQL Server:
+
+1. Enable change tracking on the table:
+   ```sql
+   ALTER TABLE dbo.<Table> ENABLE CHANGE_TRACKING WITH (TRACK_COLUMNS_UPDATED = ON);
+   ```
+2. Get the current version (use as initial version after a full load):
+   ```sql
+   SELECT CHANGE_TRACKING_CURRENT_VERSION() AS CurrentVersion;
+   ```
+3. Sling CDC stream queries the change table joined to the source:
+   ```sql
+   SELECT * FROM CHANGETABLE(CHANGES dbo.<Table>, {incremental_value}) ct
+   JOIN dbo.<Table> t ON ct.<PK1> = t.<PK1> AND ct.<PK2> = t.<PK2>
+   ```
+
+The `{incremental_value}` is the last `SYS_CHANGE_VERSION` stored in the `_load` tracking table.
+
 ### When adding a new volumetric table
 
-1. Sling: add both `<Table>` (full-refresh + chunk_size) and `<Table>_Changes` (incremental + CHANGETABLE) streams
-2. DBT staging: add `stg_qa_<table>` and `stg_qa_<table>_changes` views
-3. DBT intermediate: add `int_<domain>_full` and `int_<domain>_changes` views (use `cdc_deduplicate` macro)
-4. SQLAlchemy: add `<table>_load` model with `CDCLoadMixin`
-5. Dagster asset: implement with `LoadModeConfig`, `SimpleLoader`/`CDCConfig` for CDC, `BatchLoader`/`InsertConfig` for full
+1. **Source DB:** enable change tracking on the source table (`ALTER TABLE ... ENABLE CHANGE_TRACKING`)
+2. **Note the current version** (`CHANGE_TRACKING_CURRENT_VERSION()`) — use as initial version after first full load
+3. Sling: add both `<Table>` (full-refresh + chunk_size) and `<Table>_Changes` (incremental + CHANGETABLE) streams
+4. DBT staging: add `stg_qa_<table>` and `stg_qa_<table>_changes` views
+5. DBT intermediate: add `int_<domain>_full` and `int_<domain>_changes` views (use `cdc_deduplicate` macro)
+6. SQLAlchemy: add `<table>_load` model with `CDCLoadMixin`
+7. Dagster asset: implement with `LoadModeConfig`, `SimpleLoader`/`CDCConfig` for CDC, `BatchLoader`/`InsertConfig` for full
+8. **First run:** full load, then seed the `_load` tracking table with the noted version
 
 ## Asset Strategy
 
