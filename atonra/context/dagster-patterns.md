@@ -45,6 +45,50 @@ Refinitiv QA ──(sling)──→ raw ──(dbt)──→ staging ──(dbt)
 - **`_full` views:** complete dataset. Used for backfills and initial loads.
 - When investigating daily job performance, focus on `_changes` views — they are what runs daily.
 
+## Dual-Load Strategy (volumetric tables)
+
+Large tables (market_data, std_financial_value, estimate_consensus — tens/hundreds of millions of rows) use two loading strategies:
+
+### Sling ingestion (raw)
+
+| Strategy | Sling mode | Streams | Usage |
+|---|---|---|---|
+| CDC | `incremental` | `<Table>_Changes` streams, SQL Server `CHANGETABLE`, `update_key: SYS_CHANGE_VERSION` | Daily scheduled |
+| Full load | `full-refresh` | `<Table>` streams with `chunk_size` for large tables | One-shot, on-demand |
+| Reference | `truncate` | Small lookup tables (items, periods, filings, fx_rate) | Daily, complete reload |
+
+### DBT views (staging → intermediate)
+
+Each volumetric table has two intermediate views:
+- `int_<domain>_changes` — reads from `stg_qa_<table>_changes`, deduplicates via `cdc_deduplicate` macro against `_load` tracking table
+- `int_<domain>_full` — reads from `stg_qa_<table>`, no deduplication, complete dataset
+
+### Master load (Python Dagster assets)
+
+| Strategy | Loader | Config | Behavior |
+|---|---|---|---|
+| CDC (default) | `SimpleLoader` | `CDCConfig` with `tracking_table` | Single pass, reads from `_changes` view, updates `_load` tracking table |
+| Full load | `BatchLoader` | `InsertConfig` with `BatchConfig` | Splits by date intervals (90d market, 30d financial), truncates before load, drops indexes/FK/unique during batch, recreates after |
+
+- **CDC is the default** — runs daily, fast, incremental.
+- **Full load requires double confirmation** — `full_load=True` + `confirm_full_load="YES"` in Dagster config. Used for initial loads and backfills.
+- **Full load optimizations:** disable WAL, disable autovacuum, drop constraints during batch — recreate after completion.
+
+### Tracking tables (`_load`)
+
+Each volumetric table has a `<table>_load` companion in the master schema (SQLAlchemy model with `CDCLoadMixin`):
+- Tracks `last_source_version` (SQL Server `SYS_CHANGE_VERSION`)
+- Records `loaded_at`, `rows_inserted`, `rows_updated`, `rows_deleted`
+- Used by `_changes` views to scope the next incremental load
+
+### When adding a new volumetric table
+
+1. Sling: add both `<Table>` (full-refresh + chunk_size) and `<Table>_Changes` (incremental + CHANGETABLE) streams
+2. DBT staging: add `stg_qa_<table>` and `stg_qa_<table>_changes` views
+3. DBT intermediate: add `int_<domain>_full` and `int_<domain>_changes` views (use `cdc_deduplicate` macro)
+4. SQLAlchemy: add `<table>_load` model with `CDCLoadMixin`
+5. Dagster asset: implement with `LoadModeConfig`, `SimpleLoader`/`CDCConfig` for CDC, `BatchLoader`/`InsertConfig` for full
+
 ## Asset Strategy
 
 ### Index management
