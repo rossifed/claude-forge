@@ -20,13 +20,13 @@ Primary database for all financial data (reference, fundamentals, timeseries).
 - **Temporal versioning:** almost all tables use `temporal_tables` extension — each table has a corresponding `<table>_history` suffix table.
 - **TimescaleDB hypertables:** timeseries data in master schema uses hypertables for partitioning and performance.
 
-### PostgreSQL — Refinitiv QA
+### MSSQL — Refinitiv QA
 
 Current primary data source for market data. Feeds the financial database.
 
 | Environment | Infra | MCP Server |
 |---|---|---|
-| QA | Hetzner (VPN required) | (none configured) |
+| QA | Hetzner (VPN required) | `mssql-refinitiv-hetzner-qa` |
 
 - **Projects using it:** fundy (data ingestion pipelines)
 - **Migration planned:** may migrate to FactSet as data provider
