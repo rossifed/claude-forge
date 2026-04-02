@@ -232,15 +232,17 @@ When running a validation, always load the fixture first. If no fixture exists f
 
 ## Saving Reports
 
-After completing a validation, **always ask** the user if they want to save the report. Do not save automatically.
+After completing a validation, **always ask** the user:
+1. Do you want to save the report?
+2. If yes: **local** (`~/Documents/data/validation-reports/`) for routine checks, or **project** (`src/data/docs/validation/`) for milestone validations that should be committed (e.g., post-migration, new provider onboarding, prod sign-off)?
 
-If yes, save to `~/Documents/data/validation-reports/YYYY-MM-DD_<domain>.md`. Include:
+Save to `YYYY-MM-DD_<domain>.md` in the chosen location. Include:
 - Date and scope of validation
 - Full summary table
 - Divergence details if any
 - Fixture version used
 
-Previous reports in `~/Documents/data/validation-reports/` serve as audit trail — compare current results against past reports to detect regressions.
+Previous reports serve as audit trail — check both `~/Documents/data/validation-reports/` (routine) and `src/data/docs/validation/` (milestones) for past results to detect regressions.
 
 ## Provider-Specific Reference
 
