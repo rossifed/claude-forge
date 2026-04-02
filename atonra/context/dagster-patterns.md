@@ -43,6 +43,7 @@ Refinitiv QA ──(sling)──→ raw ──(dbt)──→ staging ──(dbt)
 
 - **`_changes` views:** incremental — only new/modified records since last run. Used by daily ETL jobs.
 - **`_full` views:** complete dataset. Used for backfills and initial loads.
+- **`_full` and `_changes` views for the same table MUST apply identical transformation logic** (joins, filters, scaling, dedup, currency handling). When modifying one, always propagate changes to the other immediately. The only allowed differences are: CDC metadata columns (`sys_change_operation`, `sys_change_version`, `last_loaded_version`) and the CDC deduplication macro (`cdc_deduplicate`).
 - When investigating daily job performance, focus on `_changes` views — they are what runs daily.
 
 ## Dual-Load Strategy (volumetric tables)
