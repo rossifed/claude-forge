@@ -234,13 +234,13 @@ When running a validation, always load the fixture first. If no fixture exists f
 
 After completing a validation, **always ask** the user if they want to save the report. Do not save automatically.
 
-If yes, save to `analysis/validation/YYYY-MM-DD_<domain>.md` in the active project directory (not in forge). Include:
+If yes, save to `~/Documents/data/validation-reports/YYYY-MM-DD_<domain>.md`. Include:
 - Date and scope of validation
 - Full summary table
 - Divergence details if any
 - Fixture version used
 
-Previous reports in `analysis/validation/` serve as audit trail — compare current results against past reports to detect regressions.
+Previous reports in `~/Documents/data/validation-reports/` serve as audit trail — compare current results against past reports to detect regressions.
 
 ## Provider-Specific Reference
 
@@ -248,6 +248,6 @@ When executing this skill, check if provider-specific query patterns have been d
 - Fixture files (`${CLAUDE_SKILL_DIR}/fixtures/`)
 - Memory files (`memory/reference_*`)
 - Data knowledge context (`context/data-knowledge.md`)
-- Previous validation reports in `analysis/validation/`
+- Previous validation reports in `~/Documents/data/validation-reports/`
 
 If not documented, derive queries from the staging/intermediate DBT views as described in "How to Build Raw Queries".
