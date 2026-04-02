@@ -219,11 +219,35 @@ Determine available MCP servers from the project context. Typical setup:
 
 When the source DB is unreachable, use the raw schema in the test DB — it contains a Sling copy of the source data.
 
+## Test Fixtures
+
+Reusable test cases are stored in `${CLAUDE_SKILL_DIR}/fixtures/<domain>.md`. Each fixture defines:
+- A panel of companies with their IDs, currencies, and edge case rationale
+- Raw query templates for comparison
+- External source URLs where accessible
+- Known edge cases for the domain
+- Regression values from previous validations (to detect regressions)
+
+When running a validation, always load the fixture first. If no fixture exists for the domain, build one from scratch and propose saving it.
+
+## Saving Reports
+
+After completing a validation, **always ask** the user if they want to save the report. Do not save automatically.
+
+If yes, save to `analysis/validation/YYYY-MM-DD_<domain>.md` in the active project directory (not in forge). Include:
+- Date and scope of validation
+- Full summary table
+- Divergence details if any
+- Fixture version used
+
+Previous reports in `analysis/validation/` serve as audit trail — compare current results against past reports to detect regressions.
+
 ## Provider-Specific Reference
 
 When executing this skill, check if provider-specific query patterns have been documented from previous validation sessions. Look in:
+- Fixture files (`${CLAUDE_SKILL_DIR}/fixtures/`)
 - Memory files (`memory/reference_*`)
 - Data knowledge context (`context/data-knowledge.md`)
-- Previous validation results in analysis outputs
+- Previous validation reports in `analysis/validation/`
 
 If not documented, derive queries from the staging/intermediate DBT views as described in "How to Build Raw Queries".
