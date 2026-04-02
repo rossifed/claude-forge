@@ -48,6 +48,10 @@
 - After writing, show the change made.
 - Keep entries factual and concise — future sessions depend on this file.
 
+## Data Quality
+- After completing a data load, pipeline modification, or any task that writes/modifies data in the master schema, propose running data validation on the affected tables. Do not run automatically — ask first. Use the `data-validation` skill with the corresponding fixtures.
+- When a validation reveals a new edge case or data issue, propose adding it to the relevant fixture file in `data-validation/fixtures/`.
+
 ## Provider Documentation
 
 - Provider reference docs (PDFs, guides) live in `~/Documents/<ProviderName>/` (e.g., `~/Documents/Refinitiv/`, `~/Documents/FactSet/`).
