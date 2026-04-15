@@ -44,3 +44,77 @@ Refinitiv stores percentage values as whole numbers (e.g., 52 for 52%, not 0.52)
 | 2 | Share counts (Shares Outstanding, etc.) | Converted to absolute (after reload) |
 | 3 | Per-share values (EPS, DPS, etc.) | No conversion (correct) |
 | 4 | Ratios, %, operational KPIs | No conversion (correct) |
+
+## Operational Runbooks
+
+### Historical market_data backfill for specific quotes
+
+Use when quote_ids need their historical `master.market_data` populated outside
+the normal CDC flow. Common cases:
+- Post-fix that unlocks previously-masked quotes (staging dedup change, constraint relaxation)
+- A specific instrument / set of quotes whose history needs to be rebuilt
+- Gaps in `master.market_data` for quote_ids that have data in Refinitiv source
+
+**Persistent artifacts in prod** (created 2026-04-13, kept alive for reuse):
+- `master.tmp_new_quotes` — temp table with a single column `quote_id`. The
+  procedure joins to it to scope the backfill. Can be truncated/refilled freely.
+- `master.backfill_recovered_market_data()` — PL/pgSQL procedure that loops
+  2026 → 2000 year-by-year, reads from `intermediate.int_market_data_full`
+  joined to `master.tmp_new_quotes`, inserts into `master.market_data` with
+  `ON CONFLICT (trade_date, quote_id) DO NOTHING` (idempotent).
+
+**Standard procedure:**
+
+1. Scope: fill `master.tmp_new_quotes` with the target quote_ids.
+
+   ```sql
+   TRUNCATE TABLE master.tmp_new_quotes;
+
+   -- Example: backfill a single instrument
+   INSERT INTO master.tmp_new_quotes (quote_id)
+   SELECT quote_id FROM master.quote
+   WHERE instrument_id = <target> AND deleted_at IS NULL;
+
+   -- Example: backfill all quotes above a watermark (post-fix recovery)
+   INSERT INTO master.tmp_new_quotes (quote_id)
+   SELECT quote_id FROM master.quote
+   WHERE quote_id > <watermark> AND deleted_at IS NULL;
+
+   SELECT COUNT(*) FROM master.tmp_new_quotes;  -- sanity check
+   ```
+
+2. Run the procedure:
+
+   ```sql
+   CALL master.backfill_recovered_market_data();
+   ```
+
+   Timing rules of thumb (Hetzner-class, prod-class similar):
+   - ~5-10 min per year for ~100k quote_ids
+   - Seconds for a handful of quotes
+   - Scales roughly linearly with `nb_quotes × nb_years_with_data`
+
+3. Verify (sample target instrument/venue) then cleanup:
+
+   ```sql
+   DROP TABLE master.tmp_new_quotes;  -- optional; safe to keep between uses
+   ```
+
+**Properties:**
+- **Idempotent.** `ON CONFLICT DO NOTHING` → re-runs and overlaps are free.
+- **Checkpointed.** `COMMIT` between each year in the procedure body, so a crash
+  mid-backfill doesn't rollback completed years.
+- **Safe for quotes without source data.** Join to `int_market_data_full` →
+  0 rows produced, no harm.
+- **Does NOT cover `total_return`.** An equivalent procedure
+  (`master.backfill_recovered_total_return`) using `int_total_return_full` can
+  be created with the same shape; not deployed in prod as of 2026-04-15.
+
+**What this is NOT for:**
+- Recent CDC gaps (use the normal daily CDC pipeline, not this)
+- Non-market_data tables (needs a dedicated procedure)
+- Fixing data quality issues at row level (this just replays source as-is)
+
+**Origin:** Created 2026-04-13 for the ~114k recovered quotes from the
+`stg_qa_quote` secondary-listings fix. Reused 2026-04-15 for ~3.2k additional
+quotes exposed by the `master.quote` partial-unique constraint relaxation.
