@@ -8,6 +8,41 @@ au fil des sessions de travail quand de nouvelles informations sont découvertes
 ### Refinitiv → Master
 <!-- À remplir lors de la prochaine session d'exploration -->
 
+### FactSet symbology → primary resolution (entity → -S → -R → -L)
+
+FactSet identifiers (`fsym_id`) carry a 2-char suffix denoting their level (doc:
+Daily Prices V2): `-S` security, `-R` regional, `-L` listing. `sym_v1_sym_coverage`
+is the navigation HUB — one row per `fsym_id` at every level, each row carrying
+`fsym_security_id` (-S) and `fsym_regional_id` (-R) pointers. FactSet's own example
+queries navigate via these columns (confirmed in Daily Prices V2 & Fundamentals V3).
+
+**Data grains (doc-confirmed):**
+- Prices → `-R` (regional) level.
+- Fundamentals (`ff_*`) → `-R` OR `-S` level ("Fsym_id can be represented at either").
+- Listing `-L` → prices/exchange only; never used for fundamentals.
+
+**Entity primary resolution (the pure spine):**
+- Entity's primary equity = `sym_coverage.fsym_primary_equity_id`. Verified CONSTANT
+  per entity (0 entities with >1 distinct value) → no ranking needed, just read it.
+- `-S` → `-R`: read `fsym_regional_id` on the primary security's coverage row.
+- `-R` → `-L`: read `fsym_primary_listing_id` on the REGIONAL row (+ `fref_listing_exchange`).
+- Build with `DISTINCT` + double `LEFT JOIN sym_coverage` (PK = fsym_id → no fan-out,
+  1 row per entity). NO security-type whitelist, NO active_flag, NO ROW_NUMBER — the
+  spine must stay decoupled from downstream equity/company filters.
+
+**Gotchas (verified on pg-factset-aws-prod):**
+- `fsym_primary_listing_id` on a `-S` row is NOT a listing: it equals the `-R` (when
+  the security has a regional) or NULL (when it doesn't). The real `-L` is only on the
+  regional row. ⇒ no regional ⇒ NO listing reachable; a "read `-L` from the -S row"
+  fallback recovers 0 (tested). Those securities are genuinely listing-less (OTC/delisted).
+- ~22% of primary securities have no `-R` (regional NULL) — intrinsic FactSet, not a filter.
+- Reading fundamentals only at `-R` misses securities whose fundamentals sit at `-S`
+  (~7 PUB entities with NULL regional). Doc-conform fix = try `-R`, fallback `-S`.
+- One primary security can be shared by several entities (holding/opco/group, max 17
+  observed = Geodyne Energy LP family, all PVT). LEGITIMATE: replicating prices/
+  fundamentals to all sharing entities matches FactSet's model. Uniqueness holds only
+  at entity grain, never at security/regional.
+
 ## Known Pitfalls
 
 ### master.std_financial_value unit conversion — FIXED (2026-03-25, pending full reload)
