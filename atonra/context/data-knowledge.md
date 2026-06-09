@@ -73,6 +73,28 @@ the Refinitiv-vs-FactSet modeling difference (QA models ADRs/funds as standalone
 companies; FactSet does not). FactSet entity hierarchy = `ent_v1_ent_entity_structure`;
 QA's own parent link = `master.company.primary_company_id`.
 
+### FactSet price feed — FGP vs FP, history window & survivorship
+
+Two FactSet daily-price products, different grain/source/depth:
+- **FGP** (`fgp_v1_fgp_global_prices`, `-R` and `-L`): consolidated price + volume + **vwap** +
+  turnover/trade_count/returns. **History floor = 2006-01-03 (hard, whole table).** Chosen feed,
+  read at `-R` (reproduces today's Refinitiv master to the share). See market-data migration docs.
+- **FP basic** (`fp_v2_fp_basic_prices`, `-R` only): close/o/h/l/volume, **no vwap**, source IDC.
+  History back to **1972**.
+
+**Coverage at our quote universe (`-L`, data_source_id=2, 141 102 quotes; pg-factset 2026-06-09):**
+- FGP `-R` primary = 79.0 %; **FGP `-L` fallback** (no `-R` composite) = +11.3 % → **FGP total 90.3 %**.
+- The "FP-only `-R`" set (~15k) is NOT temporality and NOT mainly delisting: **84 % post-2006, 79 %
+  active** — live securities without an FGP `-R` composite, fully recovered by the **FGP `-L` fallback**.
+
+**Survivorship (`sym_v1_sym_coverage.active_flag`):** FGP is NOT live-only — it **retains 70.3 % of
+delisted** quotes (post-2006 deaths kept). Adding FP rescues only +3 205 quotes (2.3 %); FP's
+*irreplaceable* contribution = **~667 quotes that lived & died entirely before 2006** (629 delisted).
+The remaining gap (~10.4k quotes, ~70 % warrants/preferred/DRs) is **unpriced in ANY FactSet product**
+— a hard FactSet limit, not a product-choice artifact. ⇒ Use FGP `-R` + `-L` fallback; FP deferred.
+
+**Bridge `-L → -R`:** `sym_v1_sym_coverage.fsym_regional_id` (100 % of quotes resolve).
+
 ## Known Pitfalls
 
 ### master.std_financial_value unit conversion — FIXED (2026-03-25, pending full reload)
