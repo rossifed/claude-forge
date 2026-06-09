@@ -95,6 +95,46 @@ The remaining gap (~10.4k quotes, ~70 % warrants/preferred/DRs) is **unpriced in
 
 **Bridge `-L → -R`:** `sym_v1_sym_coverage.fsym_regional_id` (100 % of quotes resolve).
 
+### FactSet fundamentals & estimates — model, subscription & per-item scaling
+
+Migrating `master.std_financial_*` (statements) + `master.estimate_*` (consensus/actuals) from
+Refinitiv (RKD/IBES) to FactSet. Full analysis in `src/data/docs/factset-migration/fundamentals/`.
+Verified on `pg-factset-aws-prod`, 2026-06-09. `data_source` FDS=2 (QA=1).
+
+**Shape — the structural delta:**
+- **Fundamentals `ff_v3` = WIDE / pivoted.** One row per security×fiscal-period (`PK fsym_id,date`);
+  **each line item is its own COLUMN** (`ff_sales`, `ff_net_income`…). No per-row item code, **no
+  filing/statement decomposition**, no statement_type. ⇒ migration must **unpivot** ~130–700 columns
+  into long `(item,value)` rows AND **synthesize** the filing/statement layer from the item→statement
+  map (`ff_financial_stmt_map` / `ff_balance_model`). Subscription = **Basic + Advanced + segments
+  only** (NO Industry-Metrics / Banks / Officers → no long/EAV table). Frequencies = separate tables
+  (AF/QF/SAF/LTM/YTD); restatements = parallel `_R_` tables (PIT = `COALESCE(_R_, base)`).
+- **Estimates `fe_v4` = consensus-only** (`conh`+`act`+`guid`; NO broker detail, NO smart estimates).
+  Measure = string mnemonic `fe_item` (`EPS`,`SALES`); period = `fe_fp_end` + `fe_per_rel`;
+  effective-dated (`cons_start_date`/`cons_end_date`, NULL=current). No `fye_month`/`fiscal_year`
+  cols → derive. Fundamentals at `-R`/`-S`, estimates at `-R` (reuse `sym_v1_sym_coverage` spine).
+
+**Per-item SCALING (critical — confirmed on Apple, both sides):** values are **NOT absolute** and
+**NOT a fixed millions convention**. FactSet ships a **per-item scale factor**, rule:
+> `absolute_value = stored_value × unit_factor`
+- Fundamentals: `ref_v2_ref_metadata_fields (table_name, field_name → unit_factor, cur_indicator,
+  split_indicator)`. On `ff_basic_af`: monetary & share-counts `unit_factor=1e6`, per-share/ratios
+  `=1` (15 control cols NULL). Verified: `ff_sales` 383 285×1e6=$383.285 B, `ff_eps_basic` 6.16×1.
+- Estimates: `ref_v2_fe_item_map (fe_item → unitfactor, curindicator, splitindicator)`. Highly
+  non-uniform: `{0.01, 1, 1e3, 1e6, 1e7, 1e9}` (0.01 ⇒ some measures percent-scaled — inspect).
+  Verified: `SALES` actual 383 285×1e6, `EPS` 6.13×1.
+- ⇒ FactSet analogue of Refinitiv `ItemPrecision`/`UnitsConvToCode` (fund) + `NormScale` (est), but
+  **cleaner**: one ready multiplier per item via a metadata JOIN. The `× unit_factor` multiply
+  **stays** in the pipeline (do NOT "load directly"); only its source changes. **Lesson: two wrong
+  assumptions ("already absolute", then "fixed millions") were caught only by empirical check —
+  always sample a known large-cap before trusting a scale claim.**
+
+**Other migration notes:** master catalog IDs (`std_financial_item_id`, `period_type_id`,
+`statement_type_id`, `estimate_item_id`) = **literally the Refinitiv source codes today** → FactSet
+mnemonics force a catalog re-key (the dormant `std_financial_item_mapping` is the intended bridge).
+`currency` on `ff_*` = trading currency (AMBIGUOUS vs filing ccy — verify). FactSet FX table
+`ref_v2_fx_rates_usd` **not subscribed**.
+
 ## Known Pitfalls
 
 ### master.std_financial_value unit conversion — FIXED (2026-03-25, pending full reload)
