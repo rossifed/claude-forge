@@ -43,6 +43,36 @@ queries navigate via these columns (confirmed in Daily Prices V2 & Fundamentals 
   fundamentals to all sharing entities matches FactSet's model. Uniqueness holds only
   at entity grain, never at security/regional.
 
+### Legacy (Refinitiv/QA) ↔ FactSet ID mapping (crosswalk)
+
+Mapping the current QA master universe to the new FactSet master (for cutover ID
+realignment + coverage continuity). QA master is identifier-rich (~all of 61 664
+equities carry ISIN/CUSIP/SEDOL/RIC/ticker); FactSet is the limiting side.
+Co-locate by snapshotting QA into the FactSet DB (`migration.legacy_master_instrument`,
+1 row per QA security). Match at security grain, roll up to company.
+
+**CUSIP format trap (CRITICAL):** QA stores **CUSIP-8** (no check digit), FactSet
+`fds.sym_v1_sym_cusip` stores **CUSIP-9** (with check digit). Naïve `cusip = cusip`
+→ **0 matches**. Correct join: `left(btrim(fds.cusip), 8) = btrim(qa.cusip)`
+(the 9th digit is derived → left-8 is 1:1, no collision). This single bug looked
+like a "20k missing companies" coverage hole; it was a format false-negative.
+
+**Waterfall (deterministic, security grain, all keys at `-S`, unique → no fan-out):**
+ISIN current (`sym_v1_sym_isin`) → ISIN hist (`sym_v1_sym_isin_hist`) → CUSIP-8.
+Result: 42 238 → +14 → +18 987 → **425 unmatched (0.7 %)**. `btrim()` both sides
+(FactSet `character` cols are space-padded). SEDOL unusable (no FactSet table).
+
+**Rollup `fsym (-S) → sym_v1_sym_sec_entity (factset_entity_id) → master.entity_mapping
+→ master.company`:** 99.3 % of QA companies have a matched security, but only
+**90.7 % (54 520/60 077) resolve into `master.company`**. The ~8.5 % shortfall is
+NOT missing securities — the security resolves to a FactSet entity OUTSIDE our
+PUB perimeter (`sym_v1_sym_entity.entity_type`): funds/ETFs (MUE/MUC/… ~1 670 —
+correct exclusion), subsidiaries/holdings (SUB/HOL ~1 440 — parent usually PUB,
+consolidation), private/external (PVT/EXT ~2 200 — perimeter question). This is
+the Refinitiv-vs-FactSet modeling difference (QA models ADRs/funds as standalone
+companies; FactSet does not). FactSet entity hierarchy = `ent_v1_ent_entity_structure`;
+QA's own parent link = `master.company.primary_company_id`.
+
 ## Known Pitfalls
 
 ### master.std_financial_value unit conversion — FIXED (2026-03-25, pending full reload)
