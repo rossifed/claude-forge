@@ -135,6 +135,56 @@ mnemonics force a catalog re-key (the dormant `std_financial_item_mapping` is th
 `currency` on `ff_*` = trading currency (AMBIGUOUS vs filing ccy — verify). FactSet FX table
 `ref_v2_fx_rates_usd` **not subscribed**.
 
+### GICS classification — FactSet does NOT provide it; curated snapshot + ISIN→CUSIP bootstrap
+
+GICS is licensed (MSCI/S&P) and **absent from the FactSet feed** (FactSet's `industry_code`-style
+field = a 6-bucket financial-template `BNK/FIN/IND/INS/TRN/UTL`, NOT a sector classification). So GICS
+is **master-owned reference data**, not a provider feed. Full doc:
+`src/data/docs/factset-migration/A-referential/classification/gics-classification.md`.
+
+- **Structure** (scheme/level/node tree, 273 nodes = current GICS) = static dbt seeds; master is the
+  golden source (feeds workbench, not the reverse). `int_classification_*` read the seeds, GICS-only,
+  `scheme_id`=1, node `level_number` derived from code length (2/4/6/8→1/2/3/4). Themes (scheme 101+)
+  = separate workbench stream, deferred.
+- **Company→GICS** = a **Refinitiv-built snapshot** (`reference/gics_classification.csv`, 54,310 valid
+  ISINs), NOT the workbench `wb_classification_instruments` (only ~6.6k favorites, unused in prod). Prod
+  `entity_classification` GICS already comes from this S3 file.
+- **Bootstrap = one-shot ISIN→CUSIP waterfall** → resolve to OUR `entity_id`, then freeze as a curation
+  seed (`curation.gics_company_mapping(entity_id, gics_sub_industry_code, source)`, keyed by the id we
+  own → no runtime ISIN dependency; ISIN may not persist in the FactSet feed). Path: `sym_v1_sym_isin`
+  → `sym_v1_sym_sec_entity` → `entity_mapping`(ds=2) → company (deterministic 1:1, no fan-out); CUSIP
+  fallback for ISINs absent from FactSet (27%!) via `migration.legacy_master_instrument.cusip` (CUSIP-8)
+  → `migration.fds_cusip8_lookup`. ISIN-only=38,421; +CUSIP=**50,354** (≈prod 50,533, 0.35% gap = hard
+  FactSet universe limit). Historical ISINs rejected (+86 but 8× conflicts). `int_entity_classification`
+  = straight projection of the seed (validate entity+node), **conflicts EXCLUDED never guessed**.
+- **Mnemonic standardized `GICSCLAS`→`GICS`** (only 2 code refs; unifies `company_enriched` which
+  already used 'GICS'; frontend agnostic via `/api/data/gics`).
+- **`curation` pattern (reusable):** dedicated `curation` schema = future operational table name (loader
+  `source_table` never changes); keyed by an id we own; `source` provenance column; git CSV = v0 store.
+  Same pattern for any manually-managed master input (cf. `entity_filter_override`).
+
+### FactSet region taxonomy vs Atonra `master.region` — DIVERGENT, do NOT auto-map
+
+`master.country_region` is **provider-agnostic Atonra IP**, not provider data. Source = a bespoke
+investment-region matrix (`seed.regions_master`, ex-`raw.s3_regions_master`): Developed/Emerging/
+Frontier (market classification) + Americas/EMEA/APAC/Standalone/BRICS/MENA/Eurozone/Europe/LatAm.
+Many-to-many (a country sits in several). Migrated as a **dbt seed** (98 countries × 12 flags) → the
+co-located build carries no Sling/S3 dependency. `int_country_region` unpivots the seed + resolves ids
+at master; `stg_s3_country_region` deleted (seeds skip staging). Validated: 284 rows, fingerprint
+**identical** to Refinitiv prod `master.country_region`.
+
+**FactSet HAS an overlapping country×region matrix but it is NOT a drop-in replacement:**
+- `fds.ref_v2_econ_country_inclusion` (iso_country × {developed, emerging, frontier, **bric**, eurozone,
+  eu15/eu27, g7, g20, gcc, opec, oecd, asean, …}) + `fds.ref_v2_country_map` (iso_country → geographic
+  region A/E/F/L/M/N/Y = Asia/Europe/Africa/LatAm/MidEast/NorthAm/Pacific). Also `fds.ref_v2_region_map`
+  (geo lookup), `fds.sym_v1_sym_region` (security→geo region).
+- **Verified divergences (adopting FactSet would CHANGE master values):** FactSet `bric` excludes South
+  Africa (BRIC=4; Atonra BRICS includes ZA); FactSet classes Saudi Arabia **Frontier**, Atonra **Emerging**.
+- **No FactSet equivalent** for `Standalone` (portfolio concept), nor the composites `Americas`/`EMEA`/
+  `APAC`/`MENA` (would need bespoke composition from geo codes).
+- ⇒ Seeded to preserve exact prod semantics. FactSet `ref_v2_econ_country_inclusion` = candidate
+  **future-refresh** source for the market-classification dimension only, NEVER an automatic 1:1 map.
+
 ## Known Pitfalls
 
 ### master.std_financial_value unit conversion — FIXED (2026-03-25, pending full reload)
