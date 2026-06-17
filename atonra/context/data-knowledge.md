@@ -135,6 +135,29 @@ mnemonics force a catalog re-key (the dormant `std_financial_item_mapping` is th
 `currency` on `ff_*` = trading currency (AMBIGUOUS vs filing ccy — verify). FactSet FX table
 `ref_v2_fx_rates_usd` **not subscribed**.
 
+### Classification framework — multi-scheme (GICS + FactSet Sector + RBICS)
+
+Classifications are **multi-scheme**: parallel lenses on the same entities via `classification_scheme/
+level/node` + `entity_classification(entity_id, scheme_id, node_code)`. **Assignment is at the ENTITY
+grain, no subtype filter** — companies, funds, any type FactSet classifies flow through; filtering
+(e.g. excluding funds) is a downstream/consumption concern. Adding a scheme = seed row (id+mnemonic) +
+2 staging models (`stg_fds_<scheme>_classification` tree + `stg_fds_<scheme>_entity_mapping` assignment)
++ a UNION branch in the `int_classification_*`/`int_entity_classification` models. 3 schemes live
+(scheme_id GICS=1, FactSet Sector=2, RBICS=3; SIC=4/NAICS=5 reserved; themes=101+ deferred). Full doc:
+`src/data/docs/factset-migration/A-referential/classification/classification-framework.md`.
+
+- **FactSet Sector** (scheme 2): FactSet proprietary, 2 levels (22 sectors→138 industries), provider-
+  native/refreshable from `ref_v2_factset_sector_map`/`_industry_map` + `sym_v1_sym_entity_sector`.
+  **99.7% coverage (139,015 = companies + funds)** → fills the GICS gap. Drop the `9999` "Not Classified"
+  sentinel (collides across both levels). Funds land in "Miscellaneous / Investment Trusts/Mutual Funds".
+- **RBICS** (scheme 3): FactSet Revere, revenue-based, **6 levels** (Economy→Sector→Sub-Sector→Industry
+  Group→Industry→Sub-Industry = 14/37/111/385/971/2021 = 3,539 nodes) from `rbics_v1_rbics_structure`
+  (current = `end_date IS NULL`; codes are prefix-hierarchical 2/4/6/8/10/12 digits). Entity assignment
+  at **L2 focus** (`sym_v1_sym_entity_sector_rbics`, 1/entity); granular L6 revenue segments
+  (`rbics_bus_seg_*`, multi-membership) = deferred. 130,269 coverage.
+- **When to use**: GICS = investment standard/comparability; FactSet Sector = coverage; RBICS = granular/
+  thematic (what a company sells). NACE/CIC = code maps only (no entity assignment), unusable.
+
 ### GICS classification — FactSet does NOT provide it; curated snapshot + ISIN→CUSIP bootstrap
 
 GICS is licensed (MSCI/S&P) and **absent from the FactSet feed** (FactSet's `industry_code`-style
