@@ -47,10 +47,12 @@ Analytics and reporting engine.
 
 | Environment | Infra | MCP Server |
 |---|---|---|
-| Production | AWS K8s | (to be configured) |
+| Production | AWS K8s | `ch-analytics-aws-prod` (db `analytics`, read-only) |
 | Test | Hetzner | (to be configured) |
 
 - **Projects using it:** fundy (data microservice, analytics)
+- **Default database:** `analytics` (not `default` — the `fundy_app` account's data grants are on `analytics`).
+- **MCP server:** `mcp-clickhouse` (official), HTTP interface port 8123, accessed via Tailscale host `fundy-clickhouse-analytics`.
 
 ## Structural Constraints
 
