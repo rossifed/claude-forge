@@ -95,6 +95,89 @@ The remaining gap (~10.4k quotes, ~70 % warrants/preferred/DRs) is **unpriced in
 
 **Bridge `-L → -R`:** `sym_v1_sym_coverage.fsym_regional_id` (100 % of quotes resolve).
 
+**Price UNIT — FGP is ABSOLUTE (major currency unit), NO sub-unit scaling (verified 2026-06-19).** Unlike
+Refinitiv (which stores minor units — GBp pence, cents — + a `price_unit` divisor, e.g. 0.01), FGP delivers
+prices **already in the major unit**. Verified on the classic pence case: BP `4.901` / VOD `1.087` (GBP) in
+FGP vs Refinitiv prod `490.05` / `108.7` pence (`price_unit=0.01`) — same value, FGP in pounds. ⇒
+`master.market_data_adjusted.price_unit` is a constant **1.0**; **no price scale factor to re-apply**
+(distinct from the per-item `unit_factor` for fundamentals/estimates — prices are already normalized).
+Migration contract change: UK/sub-unit prices go **pence → major unit (÷100)** vs current prod — same value,
+different unit, a visible change for consumers that assumed the pence convention.
+
+### FactSet market cap → master.company_market_cap (+ FX gap)
+
+Source = **`fds.ent_v1_ent_entity_mkt_val`** (grain `factset_entity_id × mv_date`, **133 M rows**). Columns:
+`ent_mv` (total market value) + `ent_mv_ex_treasury` / `ent_mv_ex_non_traded` / `ent_mv_ex_non_traded_treasury`
+(float-adjusted variants). `currency` = local currency of the value.
+
+**SCALE — never hardcode, JOIN the metadata.** `ent_mv` is stored in **MILLIONS**; master stores **absolute**.
+The factor lives in **`fds.ref_v2_ref_metadata_fields`** (`table_name='ent_entity_mkt_val'` — no `ent_v1_`
+prefix — `field_name='ent_mv'` → `unit_factor`). Apply `ent_mv * unit_factor` via a JOIN in **staging**
+(source-dependent scaling), exactly like fundamentals/estimates. Verified authoritative: `unit_factor=1e6`,
+`cur_indicator=1` (currency value → FX needed for USD), `split_indicator=null` (no split factor).
+
+**FIELD CHOICE — `ent_mv` (TOTAL), NOT `ex_treasury` (verified 2026-06-19, random n=500 + treasury-affected
+n=100 vs Refinitiv prod).** Per Daily Prices V2 doc p.24, `ent_mv` = market value of **all** share types
+(common + preferred + non-traded + **treasury**) → it is *total entity value*, NOT textbook float market cap.
+Prod matches **`ent_mv` ~79%** of treasury-affected names (85% of ALL companies within ±2%), `ex_treasury`
+~14%, **neither** ~7% — **Refinitiv mixes conventions per company; no single FactSet field reproduces it.**
+Chose `ent_mv` for prod-continuity + zero rework (picking `ex_treasury` would visibly change ~22% of
+companies, e.g. Toyota −17.5%; Samsung would instead *rise* +3.9% — direction is structure-dependent, NOT
+uniform). `ent_mv_ex_treasury` ≡ `ff_mkt_val` = the strict (price × shares-outstanding) market cap — **defer
+as a future SEPARATE column** if the strict definition is ever needed (`ff_mkt_val` itself unusable as a
+source: `ff_basic_cf` is a snapshot, 1 row/fsym, no history). **LESSON: the earlier "cross-checked to the
+digit" note (AstraZeneca/HSBC/Samsung) was incomplete — those are zero-treasury names where `ent_mv ==
+ex_treasury`; a treasury-heavy name (JPMorgan: `ent_mv` 1.32T vs prod 871B = `ex_treasury`) is what exposed
+the variant question. Always include a treasury/preferred-heavy sample.**
+
+**`shares_outstanding` is NOT reconcilable with `market_cap` — independent metrics by design.**
+`fgp_v1_fgp_shares_comp_hist.adj_shares_outstanding` (the only share column, company grain, fiscal-reported,
+split-adjusted, ×1e6 via metadata) = shares outstanding **net of treasury** (Toyota 13.03B = its real
+outstanding, verified; FactSet has no clean "total/issued" column — total is implicit in `ent_mv`). Because
+`ent_mv` counts treasury but shares is net-of-treasury, **`market_cap / shares_outstanding ≠ price`** for
+treasury/preferred-heavy names (Toyota +21%, JPM +52%). Stored as independent metrics; do NOT expect a
+consumer to recompute price from the two. (Future option: split mcap & shares into separate master tables,
+rejoin in serving — different grain/source/frequency: mcap daily, shares fiscal-quarterly.)
+
+**REJECTED: computed `primary_close × shares_outstanding`.** Coherent by construction but (a) **~74% coverage
+loss** — only ~14.5k companies have a resolvable primary FGP price (`market_data_adjusted`, is_primary, raw
+`close`) vs ~51k with `ent_mv` (private/unpriced entities have an entity market value but no traded price);
+(b) **share-class mismatch** — applying the primary common price to company-level shares that include
+preferred overstates (Samsung +3.9% vs `ent_mv`); (c) fragile primary-equity resolution (JPM = 207
+instruments). Use the provider's `ent_mv` directly.
+
+**Entity resolution:** `ent_mv.factset_entity_id` (char, btrim) = `entity_mapping.external_entity_id`
+(data_source_id=2) → `internal_entity_id` = entity = company (`company_id` = `entity_id`, inheritance).
+Intermediate resolves currency → `currency_id`.
+
+**FX — RESOLVED (2026-07-07): FactSet now ships an FX table.** Since `cur_indicator=1` (mcap in local
+currency), USD conversion (`company_market_cap_usd`) needs an FX source. The earlier gap is closed —
+FactSet added **`fds.ref_v2_econ_fx_rates_usd`** (⚠️ real name carries the `econ_` infix, NOT the earlier
+guessed `ref_v2_fx_rates_usd`). Verified on `pg-factset-aws-prod`: 636 770 rows, **77 currencies**,
+1970-01-30 → 2026-07-05 (fresh, J-2). Grain = `iso_currency × exch_date` (daily spot). Two directions:
+`exch_rate_usd` (USD value of 1 local unit, e.g. EUR→1.1415) and `exch_rate_per_usd` (local per 1 USD,
+JPY→162.34). Metadata companion `fds.ref_v2_iso_currency_map` (currency-code validation). No dedicated
+cross-rate table (`ref_v2_fx_rates` still absent) — derive crosses by USD triangulation.
+
+**Coverage vs real demand (currencies actually in `ent_v1_ent_entity_mkt_val`):** 72 currencies demanded,
+**66 covered incl. USD-base (91.7 %), 6 MISSING** = `TND, ZWG, VES, ZMW, IQD, BMD`. All 6 are a frontier
+tail but **NOT out-of-perimeter**: they resolve into `master.company` and every one is quoted →
+**188 real quoted companies** would get `company_market_cap_usd = NULL` untreated (TND=80 is 43 % of the
+tail; only 3 of 83 TND entities fail to resolve). Lesson: don't hand-wave a tail as "probably negligible" —
+measured, it's 188 live quoted companies, ~0.4 % of the ~50 k universe.
+
+**Refinitiv (prod `master.fx_rate`, still fed) covers ALL 6 as a fallback** (verified 2026-07-07): VES 46 456,
+ZMW 41 488, TND 41 178, BMD 38 985, IQD 34 673, ZWG 24 113 rows, all fresh to 2026-07-05. (⚠️ Refinitiv ZWG
+starts 2009 though "Zimbabwe Gold" is an Apr-2024 unit — code reused for an earlier ZW currency; irrelevant
+for current mcap, only today's rate matters.) ⇒ the gap is fully closeable without a new external source.
+
+**Decision (reco = Option B, full-FactSet):** BMD peg = **hardcode 1.0** (1 BMD ≡ 1 USD) recovers 10 for free;
+leave `company_market_cap_usd` NULL for the remaining 178 frontier companies (TND/ZWG/VES/ZMW/IQD) rather than
+rebranch a Refinitiv FX dependency for ~0.4 % of the universe (against the cut-Refinitiv goal; VES/ZWG USD
+values are hyperinflation-unreliable anyway). Option A (FactSet + targeted Refinitiv top-up = 100 % coverage)
+stays available if a business need on TND specifically emerges. Ingestion contract: `master.fx_rate` built
+from `ref_v2_econ_fx_rates_usd`, scale in **staging** (source-dependent), resolve `currency_id` at intermediate.
+
 ### FactSet fundamentals & estimates — model, subscription & per-item scaling
 
 Migrating `master.std_financial_*` (statements) + `master.estimate_*` (consensus/actuals) from
@@ -132,8 +215,8 @@ Verified on `pg-factset-aws-prod`, 2026-06-09. `data_source` FDS=2 (QA=1).
 **Other migration notes:** master catalog IDs (`std_financial_item_id`, `period_type_id`,
 `statement_type_id`, `estimate_item_id`) = **literally the Refinitiv source codes today** → FactSet
 mnemonics force a catalog re-key (the dormant `std_financial_item_mapping` is the intended bridge).
-`currency` on `ff_*` = trading currency (AMBIGUOUS vs filing ccy — verify). FactSet FX table
-`ref_v2_fx_rates_usd` **not subscribed**.
+`currency` on `ff_*` = trading currency (AMBIGUOUS vs filing ccy — verify). FactSet FX now available:
+`fds.ref_v2_econ_fx_rates_usd` (see market-cap FX section for coverage/decision).
 
 ### Classification framework — multi-scheme (GICS + FactSet Sector + RBICS)
 
@@ -209,6 +292,37 @@ at master; `stg_s3_country_region` deleted (seeds skip staging). Validated: 284 
   **future-refresh** source for the market-classification dimension only, NEVER an automatic 1:1 map.
 
 ## Known Pitfalls
+
+### ADR companies — Refinitiv models a company-with-ADR as TWO companies
+
+Refinitiv QA models a company that has an ADR as 2 distinct `master.company` rows:
+the ordinary line (primary) + a separate ADR line (name marker `'- ADR'` / `'(ADR)'`).
+The optimizer needs both folded onto one logical company. 1058 name-matched ADR
+pairs exist (1003 distinct ADR; total 1763 ADR-tagged companies).
+
+- **`master.company.primary_company_id` is NOT reliable for this**: NULL in ~90% of
+  ALL companies, and on the 1058 ADR pairs it links correctly only 915× (86.5%) —
+  86 NULL (e.g. Alibaba), 57 wrong. Do not use it as the ADR→primary mechanism.
+- **`organization_id` is a Refinitiv OrgID — a SEPARATE id space, NOT a `company_id`**
+  (max ~128M vs `company_id` max ~140k). NEVER join `organization_id = company_id`
+  (~39k coincidental value matches = pure noise). Use it ONLY as a self-join
+  (`company A.org = company B.org`) to group peers. It corroborates the exact name
+  match at 98.2% but contradicts 15× (Refinitiv org collisions / spin-offs, e.g.
+  Metso→Neles, Amersham→American Home Mortgage) — so it must **NEVER override an
+  exact name match**. `ultimate_organization_id` is NULL across the ADR perimeter
+  (unusable).
+- **Solution: `master.adr_primary_mapping`** (dbt model `models/master/`, view over
+  `master.entity`+`master.company`). Resolves `adr_company_id → primary_company_id`
+  by EXACT unique name match (UPPER/TRIM), with a human-curated override seed
+  (`seeds/adr_primary_mapping_override.csv`, schema `seed`) applied at top priority
+  for the 53 ambiguous-name cases (ADR name matches >1 company, e.g. ABB Ltd vs a
+  duplicate Abb Ltd; override pick = the candidate that is org-self-referencing).
+  Contains all 1763 ADR (1 row each) so it doubles as the exhaustive ADR catalogue.
+  Coverage: **1003/1763 resolved** (53 override + 950 name); 760 `unresolved` = ADR
+  whose ordinary line is simply not loaded in `master.company` (e.g. many Chinese
+  ADRs: 17 Education, 51job, 36Kr) — fold as standalone, nothing to link to.
+- **Quick-win / band-aid** pending the FactSet migration, which changes the entity
+  model (ADR + ordinary expected to collapse to one entity).
 
 ### master.std_financial_value unit conversion — FIXED (2026-03-25, pending full reload)
 
