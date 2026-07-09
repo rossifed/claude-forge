@@ -2,7 +2,7 @@
 
 Source: `master.market_data_adjusted` — full-refresh from FactSet FGP (`fds.fgp_v1_fgp_global_prices`),
 adjusted with the golden factors `master.corpact_adjustment` (split/spinoff) + `master.dividend_adjustment`
-(dividend). Stores raw + corp-adjusted (`adjusted_*` = Yahoo "Close") + total-return (`tr_*` = Yahoo
+(dividend). Stores raw + corp-adjusted (`adjusted_*` = Yahoo "Close") + total-return (`total_return_*` = Yahoo
 "Adj Close") + FactSet pre-computed signals (`return_1d`, `mom_1M/3M/6M/1Y`, `turnover`, `trade_count`).
 
 ## Test Panel (split + dividend cases, multi-currency)
@@ -24,7 +24,7 @@ adjusted with the golden factors `master.corpact_adjustment` (split/spinoff) + `
 ```sql
 SELECT quote_id,
   count(*) FILTER (WHERE close IS NOT NULL AND abs(adjusted_close - close*cum_adj_factor)  > 1e-6) AS corp_mismatch,
-  count(*) FILTER (WHERE close IS NOT NULL AND abs(tr_close      - close*cum_full_factor) > 1e-6) AS tr_mismatch,
+  count(*) FILTER (WHERE close IS NOT NULL AND abs(total_return_close - close*cum_full_factor) > 1e-6) AS tr_mismatch,
   min(cum_adj_factor) AS min_cum_adj, min(cum_div_factor) AS min_cum_div   -- << 1 on old prices = head OK
 FROM master.market_data_adjusted WHERE quote_id IN (<panel>) GROUP BY 1;
 ```
@@ -54,7 +54,7 @@ JOIN master.currency cur ON cur.currency_id=q.currency_id ORDER BY cur.code, d.n
   (0.003%). **This is FactSet-faithful** (`cum_full` still == FactSet's combined factor). Clamping
   `div_adj_factor ≤ 1` would BREAK the validated recombination → wrong total return. Leave as-is.
   Find: `SELECT equity_id FROM master.dividend_adjustment WHERE div_adj_factor > 1 AND ex_div_date > DATE '1900-01-01'`.
-- **`tr_close ≤ adjusted_close` is the NORM, not a hard invariant.** Total-return-adjusted historical
+- **`total_return_close ≤ adjusted_close` is the NORM, not a hard invariant.** Total-return-adjusted historical
   prices are scaled down more (dividends) → usually below corp. The 9 securities above are legit exceptions.
 - **Head-segment**: prices before an equity's first recorded CA carry the FULL product (incl. the oldest
   event). Verified via a synthetic head row over `[1900-01-01, oldest_event-1]`. Old prices show
@@ -74,7 +74,7 @@ JOIN master.currency cur ON cur.currency_id=q.currency_id ORDER BY cur.code, d.n
 ## Regression Values (validated 2026-06-19, pg-factset-aws-prod)
 
 ### NVIDIA (USD, quote 69191 / K7TPSX-R) — around the 10:1 split (2024-06-10) + a dividend ex-date
-| trade_date | cum_adj | cum_div | raw close | adjusted_close (corp) | tr_close (total) |
+| trade_date | cum_adj | cum_div | raw close | adjusted_close (corp) | total_return_close (total) |
 |---|---|---|---|---|---|
 | 2024-06-07 | 0.10 | 0.998273 | 1208.88 | 120.89 (= Yahoo "Close") | 120.68 (= Yahoo "Adj Close") |
 | 2024-06-10 | 1.00 | 0.998273 | 121.79 | 121.79 | 121.58 |

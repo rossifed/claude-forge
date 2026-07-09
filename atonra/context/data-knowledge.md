@@ -146,6 +146,43 @@ loss** — only ~14.5k companies have a resolvable primary FGP price (`market_da
 preferred overstates (Samsung +3.9% vs `ent_mv`); (c) fragile primary-equity resolution (JPM = 207
 instruments). Use the provider's `ent_mv` directly.
 
+**HISTORY DEPTH — daily `ent_mv` starts 2015-12-30 ONLY; FactSet-only REGRESSES vs prod (verified 2026-07-08).**
+`fds.ent_v1_ent_entity_mkt_val` first date = **2015-12-30**, 0 rows before (134 M rows ≈ 10 yr). But current prod
+`master.company_market_cap` (Refinitiv-fed, `pg-financial-aws-prod`) goes back to **2000-01-02** — **101 M rows /
+43 % of the series live before 2015**. So a FactSet-only daily mcap **drops ~15 yr of history** (misses 2008, dot-com
+…) — a real **regression**, not a product choice. Options: **(1) SPLICE (reco to keep daily)** = freeze Refinitiv
+daily 2000→2015 + FactSet 2015→ ; coherent because `ent_mv` was chosen to match Refinitiv (~79-85 %) so the 2015
+join is near-continuous; needs a one-shot freeze of the Refinitiv history (no live Refinitiv dependency). **(2)**
+`ff_v3_ff_basic_der_af/qf`.`ff_mkt_val` = fundamentals-derived mcap back to **1979 (annual) / 1989 (quarterly)** but
+LOW-frequency + STRICT price×shares convention (≈ `ent_mv_ex_treasury`, ≠ our total `ent_mv`) → a splice here adds a
+2015 convention step. **(3)** accept 10 yr (hard to defend vs the 26 yr shipped today). No daily FactSet source older
+than 2015 is subscribed (`hlt_*mkt_cap` not loaded; computed price×shares back to 2006 already rejected above).
+Decision **TBD** — product/architecture call; a FactSet support ticket asks whether the 2015 floor is a data or a
+contractual limit.
+
+**Daily pre-2015 via computed price×shares — VALIDATED but imperfect; SPLICE preferred (2026-07-08).** FactSet
+support confirmed the 2015 floor is a **documented DATASET limit, NOT contractual**, and suggested reconstructing
+daily mcap from `fp_v2_fp_basic_prices.p_price × fp_v2_fp_basic_shares_hist.p_com_shs_out`, aggregated to entity.
+TESTED on the 2015+ overlap — it works, but FactSet's reply **omitted two things**: (a) **symbology level** — fp
+is keyed at `-R` (regional), `sym_v1_sym_sec_entity` at `-S` (security) → direct join = **0 rows**; must navigate
+`-S → -R` via `sym_v1_sym_coverage.fsym_regional_id`; (b) **scale** — `p_com_shs_out` has `unit_factor=1000`
+(stored in thousands). With both fixes, `price × shares×1000` reproduces **`ent_mv` (TOTAL — `p_com_shs_out` is
+total incl. treasury, NOT ex_treasury; the earlier "shares net-of-treasury" fear was WRONG for THIS table)**:
+median ratio **1.000**; single-security **97 % within ±2 %**; treasury-affected single-security still **82.7 %
+within ±2 % vs TOTAL**. BUT multi-security (common+preferred) degrades: **~81 % within ±2 %, a real ~15-25 %
+error TAIL on complex/preferred-heavy names** (preferred securities lack fp price/shares → the entity sum
+under-counts) — exactly the Toyota/JPM cases behind the original rejection. fp depth: prices & shares to **1984** (shares sparse pre-2000).
+
+**DECISION LEAN (revised 2026-07-09): pure-FactSet reconstruction PREFERRED over the splice.** Freezing Refinitiv
+(a provider we're decommissioning) is a strategic dead-end + provenance debt; and a same-method reconstruction is
+**methodologically CONTINUOUS** with the 2015+ `ent_mv` (no convention jump at 2015 — which the SPLICE *does*
+introduce for the ~15-21 % of names where Refinitiv ≠ `ent_mv`). The blocker = the **~15-25 % multi-class tail**
+(big/preferred names understated because fp_basic `p_com_shs_out` is common-only). It is likely reducible — the
+preferred/non-traded classes simply aren't in fp_basic. **OPEN: FactSet ticket asks where the preferred/non-traded
+share classes live (price+shares), or for a security-level breakdown of `ent_mv` extendable pre-2015.** If the tail
+closes → pure-FactSet reconstruction; **SPLICE = fallback** only if it proves irreducible. Fixing the regression
+itself (shipping 10 yr vs prod's 26) is non-negotiable. Validation queries + accuracy profile: this session.
+
 **Entity resolution:** `ent_mv.factset_entity_id` (char, btrim) = `entity_mapping.external_entity_id`
 (data_source_id=2) → `internal_entity_id` = entity = company (`company_id` = `entity_id`, inheritance).
 Intermediate resolves currency → `currency_id`.
@@ -171,12 +208,26 @@ ZMW 41 488, TND 41 178, BMD 38 985, IQD 34 673, ZWG 24 113 rows, all fresh to 20
 starts 2009 though "Zimbabwe Gold" is an Apr-2024 unit — code reused for an earlier ZW currency; irrelevant
 for current mcap, only today's rate matters.) ⇒ the gap is fully closeable without a new external source.
 
-**Decision (reco = Option B, full-FactSet):** BMD peg = **hardcode 1.0** (1 BMD ≡ 1 USD) recovers 10 for free;
-leave `company_market_cap_usd` NULL for the remaining 178 frontier companies (TND/ZWG/VES/ZMW/IQD) rather than
-rebranch a Refinitiv FX dependency for ~0.4 % of the universe (against the cut-Refinitiv goal; VES/ZWG USD
-values are hyperinflation-unreliable anyway). Option A (FactSet + targeted Refinitiv top-up = 100 % coverage)
-stays available if a business need on TND specifically emerges. Ingestion contract: `master.fx_rate` built
-from `ref_v2_econ_fx_rates_usd`, scale in **staging** (source-dependent), resolve `currency_id` at intermediate.
+**Decision (2026-07-08): ACCEPT the gap, NO per-currency band-aid — KNOWN LIMITATION, real fix deferred.**
+Verified post-load on the FactSet master (latest date): **171 quoted companies across the 6 currencies drop
+out of `master.company_market_cap_usd`** — TND 72, ZWG 36, VES 28, ZMW 18, IQD 10, BMD 7. Real examples:
+Banque Internationale Arabe de Tunisie / Poulina Group (TND), Econet Wireless Zimbabwe / Delta Corp (ZWG),
+Banco Provincial / Mercantil (VES), Asiacell / National Bank of Iraq (IQD), LOM Financial (BMD). ⚠️ The view
+uses an **INNER JOIN** on `fx_rate`, so these rows **vanish entirely (not NULL)** → invisible to the screener /
+optimizer size ranking, silently.
+
+**No sparadra:** we do NOT peg BMD=1.0 and do NOT rebranch Refinitiv FX — a per-currency hardcode is a
+band-aid, not a strategy. We ACCEPT the missing USD market cap for these ~171 frontier companies FOR NOW
+(~0.35 % of the ~50 k universe; VES/ZWG USD values would be hyperinflation noise anyway). The real fix is a
+deliberate **FX-fallback strategy**, TBD: either a broader FactSet FX entitlement (the econ table currently
+ships only 77 currencies) or a dedicated secondary FX feed (ECB/IMF/Refinitiv) wired as an explicit
+multi-source FX layer decoupled from the primary FactSet spine. **Open design point (independent of the
+source fix):** switching `company_market_cap_usd` to a **LEFT JOIN** would keep these companies visible with
+`market_cap_usd = NULL` instead of silently dropping them — a correctness improvement to fold into the real
+solution. Ingestion contract: `master.fx_rate` built from `ref_v2_econ_fx_rates_usd` (+ injected USD=1.0
+numeraire row — the source has no USD line, without it zero X→USD pairs are produced), triangulated to the
+full N×N cross matrix + identity in `int_fx_rate`, loaded in-place (`TruncateInsertConfig`, identity-preserving
+so the dependent `company_market_cap_usd` view survives).
 
 ### FactSet fundamentals & estimates — model, subscription & per-item scaling
 
@@ -290,6 +341,36 @@ at master; `stg_s3_country_region` deleted (seeds skip staging). Validated: 284 
   `APAC`/`MENA` (would need bespoke composition from geo codes).
 - ⇒ Seeded to preserve exact prod semantics. FactSet `ref_v2_econ_country_inclusion` = candidate
   **future-refresh** source for the market-classification dimension only, NEVER an automatic 1:1 map.
+
+### FactSet fund instruments — exchange-traded fund shares ARE master equities (decided 2026-07-09)
+
+`master.fund` covers fund ENTITIES only (27,888 loaded: ETF 27,743 / OEF 144 / CEF 1) — **zero
+instruments/quotes** (verified 0/27,888). The equity chain excludes funds twice by construction:
+scope = `stg_fds_company` (fund entities never enter) AND the `stg_fds_equity_coverage` whitelist
+(`universe_type='EQ'` + `fref_security_type IN (SHARE, PREF, …)` — comment says "funds/ETF out of
+scope here"). FactSet side is complete (e.g. Virtus BBC ETF `04J5F9-E`: 1 `-S` `ETF_ETF`, 2 `-R`,
+~34 `-L`, FGP prices, 14 `DVC` dividends in `fgp_v1_fgp_ca_events`).
+
+**Decision — feed `master.equity`.** Exchange-traded fund shares (`ETF_ETF`, `MF_C`) →
+`instrument` (type `EQU`) + `equity` (`equity_type` adapted 1:1, e.g. `ETF_ETF`) + `quote` on
+listings; entity = `fund`. Rationale: (1) **structural (decisive)** — the whole CA/adjustment chain
+(`dividend`, `corpact_*`, `*_adjustment`, `share_outstanding`) is FK'd on `equity_id`; no equity row
+= no adjusted prices / total return, and ETFs have real FGP CA events + splits; (2) **prod
+continuity** — Refinitiv prod already stores listed funds in `equity` (`ET` 700 / `CF` 854 / `INVT`
+314 / `ETC` 18 in the legacy snapshot); (3) FactSet itself tags ALL fund securities
+`universe_type='EQ'` (same symbology/FGP/CA feeds). The company-vs-fund ontology lives at ENTITY
+level (`company`|`fund`), never at instrument level. Rejected alternatives: entity-level split
+(recreates the Refinitiv ADR defect); dedicated instrument type without equity row (forks the
+adjustment chain).
+
+- `instrument_type` stays **`EQU`** (existing convention: "fine type lives in equity_type"; the
+  loader's subtype soft-delete discriminator relies on instrument_type ↔ subtype-table coherence).
+  `FND` (id 5, seeded, consumed nowhere) reserved for future NON-listed fund units (OEF/NAV, no
+  equity row).
+- Excluded from the chain: `MF_O` (open-end, NAV-priced, no listing — deferred, 4,157 secs),
+  `ETF_UVI`/`ETF_NAV` (synthetic NAV series), `STRUCT`/`TEMP`/`RIGHT` (junk, as in equity chain).
+- Security-type distribution of loaded fund entities (`-S` grain): ETF_ETF 24,388 / MF_O 4,157 /
+  DR 380 / WARRANT 365 / STRUCT 308 / SHARE 69 / tails.
 
 ## Known Pitfalls
 
