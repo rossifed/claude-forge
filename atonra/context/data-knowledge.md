@@ -351,26 +351,35 @@ scope = `stg_fds_company` (fund entities never enter) AND the `stg_fds_equity_co
 scope here"). FactSet side is complete (e.g. Virtus BBC ETF `04J5F9-E`: 1 `-S` `ETF_ETF`, 2 `-R`,
 ~34 `-L`, FGP prices, 14 `DVC` dividends in `fgp_v1_fgp_ca_events`).
 
-**Decision — feed `master.equity`.** Exchange-traded fund shares (`ETF_ETF`, `MF_C`) →
-`instrument` (type `EQU`) + `equity` (`equity_type` adapted 1:1, e.g. `ETF_ETF`) + `quote` on
-listings; entity = `fund`. Rationale: (1) **structural (decisive)** — the whole CA/adjustment chain
-(`dividend`, `corpact_*`, `*_adjustment`, `share_outstanding`) is FK'd on `equity_id`; no equity row
-= no adjusted prices / total return, and ETFs have real FGP CA events + splits; (2) **prod
-continuity** — Refinitiv prod already stores listed funds in `equity` (`ET` 700 / `CF` 854 / `INVT`
-314 / `ETC` 18 in the legacy snapshot); (3) FactSet itself tags ALL fund securities
-`universe_type='EQ'` (same symbology/FGP/CA feeds). The company-vs-fund ontology lives at ENTITY
-level (`company`|`fund`), never at instrument level. Rejected alternatives: entity-level split
+**Decision — fund shares feed `master.equity` (LOADED 2026-07-09).** ALL fund share classes
+(`ETF_ETF`, `MF_C`, **and `MF_O`**) → `instrument` (type `EQU`) + `equity` (`equity_type` adapted
+1:1); quotes ONLY for venue-traded types (`ETF_ETF`/`MF_C` — MF_O "listings" are NAV-publication
+pseudo-venues: Morningstar `MST*`, `ZZ*`; 0/2,052 in FGP). Entity = `fund`. Rationale: (1)
+**structural (decisive)** — the whole CA/adjustment chain (`dividend`, `corpact_*`, `*_adjustment`,
+`share_outstanding`) is FK'd on `equity_id`; no equity row = no adjusted prices / total return, and
+ETFs have real FGP CA events; MF_O too (fp_v2 dividends/splits); (2) **prod continuity** —
+Refinitiv prod already stores listed funds in `equity` (`ET` 700 / `CF` 854 / `INVT` 314 / `ETC`
+18); (3) FactSet tags ALL fund securities `universe_type='EQ'`. The company-vs-fund ontology lives
+at ENTITY level (`company`|`fund`), never at instrument level. Rejected: entity-level split
 (recreates the Refinitiv ADR defect); dedicated instrument type without equity row (forks the
-adjustment chain).
+adjustment chain). `FND` instrument_type = unused reserve.
 
-- `instrument_type` stays **`EQU`** (existing convention: "fine type lives in equity_type"; the
-  loader's subtype soft-delete discriminator relies on instrument_type ↔ subtype-table coherence).
-  `FND` (id 5, seeded, consumed nowhere) reserved for future NON-listed fund units (OEF/NAV, no
-  equity row).
-- Excluded from the chain: `MF_O` (open-end, NAV-priced, no listing — deferred, 4,157 secs),
-  `ETF_UVI`/`ETF_NAV` (synthetic NAV series), `STRUCT`/`TEMP`/`RIGHT` (junk, as in equity chain).
-- Security-type distribution of loaded fund entities (`-S` grain): ETF_ETF 24,388 / MF_O 4,157 /
-  DR 380 / WARRANT 365 / STRUCT 308 / SHARE 69 / tails.
+- **Architecture (SOLID, per-layer perimeters):** scope registry (`stg_fds_instrument_scope` =
+  UNION of per-class `stg_fds_scope_*` — the activation switch) + 2 seeds: `instrument_class_
+  security_types` (owned by instrument chain; also drives the equity_type catalog whitelist) and
+  `quote_security_types` (owned by quote chain; presence = quoted; NO MF_O row). Mechanics
+  (coverage/equity/quote/int) are class-agnostic and CLOSED — adding an entity class touches no
+  existing model. Layering is hard: instrument materialization has ZERO quote knowledge.
+- **Loaded (pg-factset-aws-prod):** 27,526 fund instruments+equities (23,475 ETF / 23 MF_C /
+  4,156 MF_O — extinct funds NOT in scope yet), 54,411 fund quotes (0 MF_O), 19,219 funds served.
+- **Equivalence-proof pitfall:** `fds.*` moves daily → never fingerprint-compare a rebuild against
+  yesterday's tables; replay the OLD SQL on the CURRENT source vs the new build, same snapshot.
+- **Ops:** dbt full-refresh of a staging table CASCADE-drops dependent views (int_equity/int_quote/
+  stg_fds_exchange/int_venue) — rebuild them; venue catalog derives from stg_fds_quote → after a
+  quote-perimeter extension run dbt → `venues` asset → `quotes` asset (else quotes drop on
+  unresolved venues; 5,993 recovered this way).
+- Excluded entirely: `ETF_UVI`/`ETF_NAV` (synthetic NAV series), `STRUCT`/`TEMP`/`RIGHT` (junk),
+  non-fund-share tails held by fund entities (DR/WARRANT/SHARE).
 
 ## Known Pitfalls
 
