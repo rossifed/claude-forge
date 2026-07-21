@@ -42,6 +42,7 @@
 @context/dagster-patterns.md
 @context/data-knowledge.md
 @context/master-schema.md
+@context/data-access-conventions.md
 
 ## Data Knowledge
 - When you discover data knowledge during exploration (source mappings, join paths, pitfalls, value formats, edge cases), propose updating `context/data-knowledge.md` with the finding. Show what you intend to add and wait for confirmation before writing.

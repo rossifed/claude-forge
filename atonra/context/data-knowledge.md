@@ -43,6 +43,23 @@ queries navigate via these columns (confirmed in Daily Prices V2 & Fundamentals 
   fundamentals to all sharing entities matches FactSet's model. Uniqueness holds only
   at entity grain, never at security/regional.
 
+### Primary listing convention CHANGES vs Refinitiv (dual-listed names)
+
+**Verified 2026-07-16 on BlackBerry.** FactSet `is_primary` follows the **home-market**
+listing (`fsym_primary_equity_id`/primary listing chain): BB primary = **TSX/CAD**
+(adv_66 ≈ 65 M USD). Refinitiv prod flagged the **most-liquid US line**: BB primary =
+**NYSE/USD** (adv_66 ≈ 281 M USD). Both masters are internally consistent — screener
+AND optimizer each honor their own master's `is_primary` (v1 Refinitiv: both join
+`is_primary = true`, same quote guaranteed; v2 FactSet marts: optimizer election puts
+`is_primary_quote` first, screener election puts the optimizer's pick first → converge
+by construction). But any consumer comparing ACROSS providers sees ×3–4
+liquidity/currency jumps on dual-listed names (all Canadian dual-listings, etc.).
+**Migration decision needed:** adopt FactSet home-market convention vs custom rule
+(most-liquid line) vs preserve Refinitiv continuity. Related liquidity-display trap:
+v1 serving exposes `latest_liquidity` = `adv_22`-weekly ("liquidity_adv_20") in
+`optimizer.instrument_data` while the screener shows `adv_66` — same quote, different
+metric, ~25% apart even when fresh; v2 marts align both on `adv_66`.
+
 ### Legacy (Refinitiv/QA) ↔ FactSet ID mapping (crosswalk)
 
 Mapping the current QA master universe to the new FactSet master (for cutover ID
@@ -72,6 +89,29 @@ consolidation), private/external (PVT/EXT ~2 200 — perimeter question). This i
 the Refinitiv-vs-FactSet modeling difference (QA models ADRs/funds as standalone
 companies; FactSet does not). FactSet entity hierarchy = `ent_v1_ent_entity_structure`;
 QA's own parent link = `master.company.primary_company_id`.
+
+**Curation pass 2026-07-20/21 — identity-proof rules (learned the hard way, doc §10 of
+`legacy-factset-id-mapping.md`):**
+- **The continued id = the Refinitiv PRIMARY record** (`adr_primary_mapping` sieve: name-marker for
+  ADR, RKD `RelToCode` types 2-7 for dual listings); a secondary/ADR-line id survives only as sole
+  handle (unresolved). Secondary lines typed `EQ` slip through any equity_type-based exclusion —
+  sieve by the catalogue, not by type. 148 entity + 31 instrument rows were remapped this way.
+- **City/postal alone is NEVER an identity proof** — registered-agent addresses and financial-
+  district postal clustering confirm across DIFFERENT companies. Identity-grade signals: company-
+  owned website domain, phone, street, FactSet former name (≥0.7), identical exchange ticker.
+- **For FUNDS, website/phone/street/address are SPONSOR-grade** (all iShares funds share them) —
+  fund-level identity proof = **ticker continuity** (survives sponsor renames/repurposings;
+  121/121 verified pairs ticker-identical). ETF "repurposing" (new strategy, same vehicle) keeps
+  ISIN+ticker → same entity, mapping stays valid.
+- **Recycled ISINs between similar-named companies are invisible to name filters** (Allco Finance
+  Group → Australian Finance Group share "Finance Group"). Detector: legacy all-delisted-years-ago
+  × FactSet entity with an ACTIVE listing → 23 hits/57k seed, 22 same-company, 1 true recycle.
+- **Name-translation false negatives are common on non-EN names** (CEMIG: "Energy of Minas Gerais"
+  EN vs "Companhia Energética de Minas Gerais" PT; FIBRA sponsor-vs-vehicle names; CRCAM heavy
+  abbreviation) — before dropping a large-cap on name discordance, check the ticker.
+- **Rows unprovable AND un-researched were deleted, not kept** (411 entity/429 instrument): no
+  consumer keyed on them → dropping is free; keeping risks a hidden recycle. Delta companies
+  (post-snapshot) must be matched against LIVE `sym_v1_*` symbology, never the frozen June lookups.
 
 ### FactSet price feed — FGP vs FP, history window & survivorship
 
@@ -320,6 +360,44 @@ is **master-owned reference data**, not a provider feed. Full doc:
   `source_table` never changes); keyed by an id we own; `source` provenance column; git CSV = v0 store.
   Same pattern for any manually-managed master input (cf. `entity_filter_override`).
 
+### Workbench themes — NOT master-eligible; serving-composed (decided 2026-07-20)
+
+Prod carries 13 thematic classification schemes (ids 101–114) alongside GICS in the generic
+framework. Verified provenance: scheme_id = workbench theme id + 100 (`raw.wb_themes` ids 1–14),
+and node codes are SYNTHESIZED name-hashes (`L1_APPLICAT_1ddf`) because the workbench export
+(`wb_theme_instruments`) ships only name paths (level_1..level_8 per ISIN), no stable node ids.
+⇒ identity is workbench-owned and rename-fragile (rename → new code → silent assignment churn).
+Source-contract test FAILS in practice → themes do NOT enter the FactSet master. Serving
+composes theme trees + assignments (ISIN → entity_id at build). Promotable later only if the
+workbench ships stable scheme/node ids. Side effect: no theme ids in master → the 101+ margin
+question vs FactSet Sector (2) / RBICS (3) is moot.
+
+**GICS custom nodes trap:** prod GICS = 275 nodes = 273 official + workbench grafts (confirmed
+`451099` "Digital Assets"; FactSet seed = exactly 273). Bootstrap validation will EXCLUDE
+companies assigned to custom nodes — decide add-to-seed vs remap-to-parent before load.
+
+### FactSet total return — fp_v2 product exists; QA reference only, master TR stays derived
+
+`fds.fp_v2_fp_total_returns_daily`: 201 M rows, 1985 → J-2, grain fsym_id × p_date,
+`one_day_pct` (daily return %, not an index level). Decision: NOT materialized in master —
+master/serving TR = derived from market_data + dividend_adjustment (already validated by
+recomposition against precisely this table). Keep fp_v2 as QA cross-check only; two TR truths
+(fp source vs FGP derivation) would diverge at the margin. The derived TR VIEW is still to be
+created (market-data remodel leftover).
+
+### FactSet migration — retired prod tables (decided 2026-07-20)
+
+- `company_weblink` (396 k, Refinitiv RKDFndCmpWebLink): OBSOLETE — FactSet ships a single
+  website; expose on `company`, no table.
+- `adr_primary_mapping`: OBSOLETE — FactSet single-entity model.
+- `total_return` table: replaced by derived view (see above).
+- `estimate_segment*`: not in FactSet feed (entitlement) — accepted gap.
+- `macro_*` (FRED): out of migration scope, unchanged, already out of the daily job.
+- KG family (kg_triplet, supply_chain, competitor, long_term_risk, hidden_connection,
+  entity_concept) + `gics_company_classification`/`last_metrics` read-models → serving.
+- ⚠️ stray `master.entity_financial_ratio` snapshot in pg-factset (830 452 rows, 2026-06-25,
+  14 908 entities, compute experiment) → purge; ratios belong to CH `signals`.
+
 ### FactSet region taxonomy vs Atonra `master.region` — DIVERGENT, do NOT auto-map
 
 `master.country_region` is **provider-agnostic Atonra IP**, not provider data. Source = a bespoke
@@ -413,6 +491,53 @@ pairs exist (1003 distinct ADR; total 1763 ADR-tagged companies).
   ADRs: 17 Education, 51job, 36Kr) — fold as standalone, nothing to link to.
 - **Quick-win / band-aid** pending the FactSet migration, which changes the entity
   model (ADR + ordinary expected to collapse to one entity).
+
+### Country fields in master — 3 semantics; screener geography = LISTING country (ADR trap)
+
+Master carries country in 4 tables with DIFFERENT semantics (FactSet feed, verified
+2026-07-17 on pg-factset-aws-prod):
+- `company.country_id` = **company domicile/HQ** (`ent_v1_ent_entity_coverage.iso_country`;
+  Alibaba → CN. n=1 check suggests HQ not incorporation — CN despite Cayman inc.; unverified
+  on redomiciliations/inversions).
+- `equity.country_id` = **listing region of the SECURITY**, NOT issuer country: the
+  ticker-region suffix (`stg_fds_equity_ticker`: `split_part(sym_v1_sym_ticker_region
+  .ticker_region,'-',2)`, e.g. `BABA-US` → US).
+- `venue.country_id` = exchange country; `fund.country_id` = fund domicile.
+- `quote` has NO country — inherits via `venue`.
+⇒ one security can carry 3 distinct countries: company (CN), equity (US), venue (US).
+
+**Screener exposes the EQUITY (listing) country as `iso_country`** — both dbt v1
+(`src/screener/.../models/screener/instrument.sql`, join on `e.country_id`) and CH mart v2
+(`src/screener/pipelines/mart_assets.py`, join `country_reference_raw.code_alpha2 =
+equity.country_code`). The API geography filter (`iso_country__eq/in/notin/like`) therefore
+filters on WHERE THE LINE TRADES. Measured: **91 % of ADR (5,409/5,925) carry US** while the
+company domicile is GB 574 / CN 567 / JP 520 / AU 423 / HK 346 / … (only 123 truly US); 446
+ADR have NULL equity country (no ticker_region). Consequences: geography=US surfaces ~5.8k
+foreign-company ADRs; Alibaba's ADR never appears under China. Verified example — Alibaba
+(company CN): ADR `BABA`→US, HK share→HK, DR `BABA34`→BR, DRs→AR/TH/SG (each = its venue).
+
+**Provider dimension — part of this is Refinitiv-inherited and CHANGES with the FactSet
+migration.** Under Refinitiv, the problem is compounded by the two-company ADR modeling (see
+"ADR companies — Refinitiv models a company-with-ADR as TWO companies" above): the ADR is a
+SEPARATE `master.company`, so even the company-level domicile is polluted (the ADR line has no
+clean link to its ordinary's home country) — geography anomalies there are partly a PROVIDER
+MODELING artifact, not just a field-choice issue. FactSet collapses ADR + ordinary onto ONE
+entity: `company.country_id` is the clean home domicile (Alibaba CN) and the ADR is just one
+more security under it. ⇒ after migration the *company-duplication* half of the problem
+disappears, but the *field-choice* half PERSISTS (all numbers above are measured on the
+FactSet master): the screener still reads `equity.country_id` = listing country, so ADRs
+still surface under US. Do not assume Refinitiv-era ADR/geography symptoms and FactSet-era
+ones are the same bug — same visible symptom, different root causes and different fixes.
+(Refinitiv `equity.country_id` lineage — `DSCtryQtInfo` quote-country — is also listing-ish,
+but its exact semantics were never verified to the same depth; unmeasured.)
+
+Code smells in the v2 mart (`mart_assets.py`): alias `issuer_country` is a **misnomer**
+(it is the ticker-region/listing country), and a second `country` join on `venue.country_id`
+is dead code (never selected). Reco (NOT implemented): expose BOTH `listing_country` and
+`company_country` (from `company.country_id`, already in master) and point the geography
+filter at the company country; the delta only shows on ADR/DR/cross-listings — a fix that
+only becomes clean POST-migration (FactSet single-entity model); under Refinitiv the ADR
+"company" has no reliable home-country to point to.
 
 ### master.std_financial_value unit conversion — FIXED (2026-03-25, pending full reload)
 
