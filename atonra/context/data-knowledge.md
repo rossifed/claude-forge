@@ -382,16 +382,25 @@ companies assigned to custom nodes — decide add-to-seed vs remap-to-parent bef
 `one_day_pct` (daily return %, not an index level). Decision: NOT materialized in master —
 master/serving TR = derived from market_data + dividend_adjustment (already validated by
 recomposition against precisely this table). Keep fp_v2 as QA cross-check only; two TR truths
-(fp source vs FGP derivation) would diverge at the margin. The derived TR VIEW is still to be
-created (market-data remodel leftover).
+(fp source vs FGP derivation) would diverge at the margin. **DONE (2026-07-22):** the derived TR
+is LIVE — `master.market_data_adjusted` exposes `total_return_*` (price × cum_full_factor,
+row-wise); CH `market_metrics` recomputes `tr_close` the same way. The `master.total_return`
+table + its loader + the QA feed (`DS2PrimQtRI`, int/stg_qa_total_return_*) were REMOVED from dev
+code (empty 0-row tables linger on pg-factset until the next schema replay drops them).
 
-### FactSet migration — retired prod tables (decided 2026-07-20)
+### FactSet migration — retired prod tables (decided 2026-07-20, IMPLEMENTED on dev 2026-07-22)
 
 - `company_weblink` (396 k, Refinitiv RKDFndCmpWebLink): OBSOLETE — FactSet ships a single
-  website; expose on `company`, no table.
-- `adr_primary_mapping`: OBSOLETE — FactSet single-entity model.
-- `total_return` table: replaced by derived view (see above).
-- `estimate_segment*`: not in FactSet feed (entitlement) — accepted gap.
+  website; expose on `company`, no table. **DONE — table + weblink_type + API/serving/loaders removed.**
+- `adr_primary_mapping`: OBSOLETE — FactSet single-entity model. (Refinitiv-only concept; retirement decided.)
+- `total_return` table: replaced by derived view (see above). **DONE — removed from dev code.**
+- `estimate_segment*`: not in FactSet feed (entitlement) — accepted gap. **DONE (empty-by-schema):** the
+  4 tables are KEPT (SQLAlchemy + Alembic) but left EMPTY — all feeds removed (loaders + int_estimate_segment*
+  + stg_qa_estimate_segment_* + stg_qa_estimates_mapping). Research reads the empty tables and its
+  investment-case tool falls back to RKD **financial** segments (`financial_segment_value`, FactSet-fed) —
+  `tool_builder.segment_revenue_analysis_df` = `_try_sources([IBES 8/9, RKD 1/2])` returns the first
+  non-empty. With this, the WHOLE remaining QA ingestion was removed: **zero `stg_qa`/`qa_*` on the
+  FactSet dev path** (only historical code comments name old stg_qa for lineage).
 - `macro_*` (FRED): out of migration scope, unchanged, already out of the daily job.
 - KG family (kg_triplet, supply_chain, competitor, long_term_risk, hidden_connection,
   entity_concept) + `gics_company_classification`/`last_metrics` read-models → serving.
