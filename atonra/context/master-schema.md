@@ -1,7 +1,20 @@
 # Master Schema — Domain Map
 
 109 tables in the `master` schema. Source-agnostic golden source for all financial reference data.
-Temporal versioning via `temporal_tables` extension (`_history` suffix — 38 tables). TimescaleDB hypertables for timeseries.
+Temporal versioning via `temporal_tables` extension (`_history` suffix — 38 tables).
+
+**TimescaleDB hypertables — provider-dependent, verify before assuming (measured 2026-07-26):**
+
+| Cluster | Hypertables |
+|---|---|
+| `pg-financial-aws-prod` (Refinitiv, prod) | **3** — `master.fx_rate`, `master.market_data`, `master.total_return` |
+| `pg-factset-aws-prod` (FactSet migration target) | **0** |
+
+The FactSet rebuild does NOT recreate them: the CtasSwap loader produces plain tables and nothing
+re-declares the hypertable afterwards. So on the FactSet master, `market_data` is an ordinary table
+(one index, `pk_market_data`) — no chunks, no compression, no chunk routing. Never assume the
+TimescaleDB shape from this document; query `timescaledb_information.hypertables` on the cluster you
+are actually targeting.
 
 ## Entity Resolution (core join pattern)
 
@@ -41,7 +54,7 @@ All mapping tables reference `data_source` (currently: QA = Refinitiv). FactSet 
 
 ## Domain: Market Data
 
-- `market_data` (12 cols) — OHLCV timeseries. **Hypertable** on date. FK: quote, currency.
+- `market_data` (12 cols) — OHLCV timeseries. Hypertable on date **in Refinitiv prod only** — plain table on the FactSet target (see the hypertable table above). FK: quote, currency.
 - `market_data_adjusted` (26 cols) — Corporate-action + dividend adjusted prices.
 - `market_data_load` (6 cols) — Load tracking for incremental ingestion.
 - `total_return` (4 cols) — Total return index. FK: quote.
