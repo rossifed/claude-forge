@@ -258,6 +258,43 @@ Nothing above is measured on the new field; treat it as the re-scoring to run, n
 `≈ ent_mv_ex_treasury` equality for `ff_mkt_val` is a carried-forward claim from 2026-07-08, never verified
 row-level.
 
+**HISTORY EXTENSION — DECIDED + fp reconstruction MEASURED/VALIDATED (2026-08-18). Supersedes the "re-scoring
+to run" above for the daily path.** Full analysis + queries: `src/data/docs/factset-migration/validation/
+market-cap-history-extension.md`.
+- **Architecture = separate series, each continuous where it exists** (NOT one spliced column — a single column
+  would put a convention break at 2015 on treasury-heavy names). **`total`** = fp reconstruction (deep) +
+  `ent_mv` total (2015+), the backtest/signal series; **`ex_treasury`** = the served convention, `ent_v1`
+  2015+ only, no pre-2015 overlay; **`float`** = `ent_mv_ex_non_traded`, 2015+ only (optional add). This
+  **dissolves** the "treasury-deduction pre-2015 / discontinuity at 2015" problem above: total stays total
+  throughout, ex_treasury is a *different served field*, so there is no convention step to reconcile.
+- **Product decisions:** pre-2015 ambition = **total daily only**; floor = **2000** (restore prod parity).
+- **fp reconstruction recipe (VALIDATED):** per entity, take the **primary equity** `-R` only
+  (`sym_coverage.fsym_primary_equity_id` → its `fsym_regional_id`), `p_price` × (last `p_com_shs_out` ≤ D) ×
+  1000. TWO mandatory guards found the hard way: (1) **exclude ADR/DR/GDR/NVDR** — an entity carries many `-R`
+  (ADR + DR + foreign listings, mixed currencies); summing them gives ratios in the *billions*. (2) **one `-R`
+  per entity** (the primary), because the same share class lists in several regions (AstraZeneca: 2 SHARE `-R`
+  London+US = same shares) → summing double-counts.
+- **Measured (ratio recon/`ent_mv` total):** 5 names / 3 ccy all **1.0000** (Toyota JPY, AstraZeneca/HSBC/Shell
+  GBP, TotalEnergies EUR).
+- **UK pence trap RULED OUT:** `fp_v2_fp_basic_prices` is in **major currency unit (pounds, not pence)** — like
+  FGP; AZN 114.6 / HSBC 15.28 / Shell 33.2 reconcile exactly. No sub-unit scaling.
+- **SPLIT-SAFE (resolves the long-open split-adjustment question for mcap):** `fp_basic` ships **price AND
+  shares point-in-time / as-reported (UNADJUSTED)**. Verified on NVIDIA 10:1 (eff. 2024-06-10): pre = $1224 ×
+  2.46B, post = $122 × 24.6B, ratio **1.0000 on BOTH sides**, mcap continuous ~$3T. The feared "adjusted price
+  × raw shares" mismatch does NOT occur; no split factor to re-apply. Dividends are a non-issue for mcap.
+- **Coverage vs our master (proxy: any primary `-R` with a `shares_hist` record ≤ D; prices are dense):**
+  by **2000 = 37,590** companies, by 2006 = 53,267, by 2010 = 66,121, by 2014 = 76,490 (vs 65,159 served today
+  at 2015+). Floor 2000 feasible; counts exceed today at 2006+ because they include **since-delisted** companies
+  → **survivorship-bias-free**, ideal for backtest.
+- **Only open item (known, accepted):** the **multi-class tail** — the primary-equity recipe under-counts
+  genuine dual-class names (common + a distinct preferred/B-class: Samsung, VW-pref, …) by the value of the
+  non-primary class; magnitude on our names not yet quantified. `ex_treasury`/`float` served path is unaffected
+  (2015+ `ent_v1`, exact).
+- **Query-perf gotcha:** `fp.fsym_id`/`ent_mv.factset_entity_id` are `bpchar`; comparing to a `text` value (e.g.
+  from `VALUES`) disables the PK index → 1B/135M-row seqscan (this, not IO, was the "saturation"). Cast the key
+  `::bpchar`; `btrim(<indexed col>)=…` also kills the index. Concurrent `sym_*` referential loads slow
+  symbology queries specifically (verified: `INSERT`/`ANALYZE` on `sym_coverage`, **0 blocked locks**).
+
 **Entity resolution:** `ent_mv.factset_entity_id` (char, btrim) = `entity_mapping.external_entity_id`
 (data_source_id=2) → `internal_entity_id` = entity = company (`company_id` = `entity_id`, inheritance).
 Intermediate resolves currency → `currency_id`.
@@ -505,6 +542,26 @@ adjustment chain). `FND` instrument_type = unused reserve.
 
 ## Known Pitfalls
 
+### `is_major_security` — propriété de société, PAS de négociabilité (mesuré 2026-07-27)
+
+Dérivé de `sym_v1_sym_coverage.fsym_primary_equity_id` (identité FactSet) filtré par le seed
+`instrument_class_security_types.csv`. **Aucune dimension de vie/mort** : la liveness vit dans
+`master.equity.delisted_date` (posé ssi `active_flag=0`). Les deux sont orthogonaux.
+
+- **Exactement 1 major par société, vivante ou morte** : 119 485 majors / 123 937 entités, dont
+  76 879 cotés et 42 606 délistés — et **0 société n'a les deux**. Une société liquidée garde donc
+  son major. Normal, pas une dérive.
+- **0 major sur ADR/DR/GDR/NVDR/PREF/PREFEQ** (vérifié sur les 215 252 titres, exhaustif). Garanti
+  par NOTRE seed, pas par le provider → une ligne ajoutée au CSV casse l'invariant en silence.
+- **PIÈGE : classer sur `is_major_security` sans filtrer les délistés renvoie des sociétés mortes.**
+  Cas `TSM` : les 2 seuls majors du symbole sont Tasman Metals (mort 2016) et Tien Son Cement
+  (2015) ; TSMC n'a que des ADR/DR (non-major), sa major est la ligne taïwanaise `2330`.
+  Le flag est *muet*, pas faux, quand la major de la société est hors du sous-ensemble interrogé.
+- 47 % des equities de `serving` sont délistées (101 372/215 252) et restent candidates à
+  `/api/data/instruments_data/resolve/`, qui n'applique aucun filtre de vie. Gate ⇒ symboles
+  ambigus 14 724 → 8 532.
+- Analyse complète : `src/data/docs/factset-migration/A-referential/equity/major-security-semantics.md`
+
 ### ADR companies — Refinitiv models a company-with-ADR as TWO companies
 
 Refinitiv QA models a company that has an ADR as 2 distinct `master.company` rows:
@@ -605,6 +662,44 @@ Refinitiv stores percentage values as whole numbers (e.g., 52 for 52%, not 0.52)
 
 - **Impact**: downstream consumers expecting normalized ratios (0.0–1.0) will get 0–100 for percentage items.
 - **Workaround**: handle at consumption layer, per item, when the semantic is known.
+
+### Split adjustment — problème transverse estimé/fondamentaux (chantier différé, mesuré 2026-08-13)
+
+Les valeurs FactSet PAR ACTION sont livrées split-ajustées as-of `adjdate` (colonne présente sur
+`fe_v4_fe_basic_conh_lt`/`conh_rec` et `ff_*`), mais **ni `adjdate` ni un facteur de split ne sont
+conservés dans master** → la valeur brute point-in-time est irrécupérable. Impact = **look-ahead en
+backtest** dès qu'on mélange une valeur par-action ajustée avec une base différente (cas phare : prix
+cible ajusté vs prix brut d'époque, pour l'upside). Mesuré sur PRICE_TGT : **~36 % des lignes ont
+`adjdate` > `effective_date`** (donc ré-ajustées rétroactivement pour des splits postérieurs au snapshot).
+NB : les comparaisons **même-source** (P/E = prix ajusté / EPS ajusté) restent correctes — le split
+s'annule ; seul le **mélange de bases** casse.
+
+- **Périmètre impacté (famille « par-action ») :** `estimate_consensus` (EPS…), `estimate_non_periodic`
+  (PRICE_TGT/RNAVPS ; pas EPS_LTG qui est un %), `estimate_actual` (EPS réalisé, DPS…),
+  `std_financial_value` (sous-ensemble EPS/DPS/BVPS/FCF-per-share + comptages d'actions). **NON impactés :**
+  le reste de `std_financial_value` (montants absolus), les revenue segments (`financial_segment_value`,
+  absolus), `estimate_recommendation` (notes), le market cap (absolu).
+- **Colonne `split_factor` :** exposée et **toujours NULL** sur `estimate_consensus` +
+  `estimate_non_periodic`, **absente** sur `estimate_actual`/`std_financial_value`. Décision 2026-08-13 :
+  **on ne touche pas au schéma** — la garder (cohérence avec les tables où elle existe déjà) ; elle ne
+  portera de l'info qu'une fois le chantier livré. Ne PAS s'appuyer dessus tant qu'elle est NULL.
+- **Le facteur N'EST PAS dans les tables d'estimé** (seulement `adjdate`, une date) → il faut le récupérer
+  ailleurs et le **cumuler sur (effective_date → adjdate]**. L'ancrage diffère de celui des prix (cumul
+  prix ancré sur aujourd'hui).
+- **Source de split à réutiliser = famille FGP déjà employée pour les prix**, PAS `fp_v2_fp_basic_splits`
+  (produit FP non utilisé chez nous) ni le `cum_full_factor` total-return (dividende inclus + ancré
+  aujourd'hui). Vérifié : `master.corpact_adjustment` ← `fgp_v1_fgp_ca_adj_factors.adj_factor_combined`
+  (splits+spinoffs, dividende exclu) ; `stg_fds_corpact_event` ← `fgp_v1_fgp_ca_events`. Motif DRY : une
+  seule vérité de split partagée prix + estimé, sinon divergence cross-source pile sur l'upside.
+- **Pourquoi deux tables de split chez FactSet :** ce sont **deux produits de prix** — FGP (Global Prices,
+  consolidé, notre feed → `fgp_v1_fgp_ca_*`) et FP basic (IDC, non utilisé → `fp_v2_fp_basic_splits`).
+  L'événement réel est le même ; FactSet livre les CA par ligne de produit.
+- **Cible = même standard que market_data :** garder la valeur brute + un facteur split ré-appliquable
+  (comme `market_data` garde le close brut + le facteur), pour servir au choix la version ajustée ou la
+  version point-in-time.
+- **OUVERT (à trancher dans le chantier, NON vérifié) :** FactSet ajuste-t-il l'estimé **splits-seuls**
+  ou **splits+spinoffs** ? → décide `corpact_adjustment` (split+spinoff) vs `fp_v2_fp_basic_splits` (split
+  pur). Se vérifie sur un cas de spinoff réel (valeur estimée avant/après vs facteur de chaque table).
 
 ## Value Formats & Conventions
 
