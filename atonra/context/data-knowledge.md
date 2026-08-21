@@ -187,6 +187,38 @@ Full method/results: `src/data/docs/factset-migration/validation/market-cap-fiel
   shares (treasury included), i.e. **prod itself commits the error there**; reproducing it would not be an
   argument for `ent_mv`. Prod is the incumbent, not the reference for correctness.
 
+**THREE LEVELS NOW LOADED — supersedes the 2026-07-27 "load both columns = rejected" (decided + VALIDATED
+2026-08-21).** The single-field arbitration above answered "if you keep ONE column, which?"; the PR
+`feat/company-market-cap-3-levels` instead ships **three explicit level columns** on `master.company_market_cap`
+because they serve different consumers, so choosing one is the wrong framing:
+- `market_cap_ex_treasury` ← `ent_mv_ex_treasury` — the CERTIFIED served convention (screener/optimizer).
+- `market_cap_total`       ← `ent_mv` — total entity value; the DEEP backtest/signal series (also the one that
+  carries the pre-2015 reconstruction, floor 2006 — see the HISTORY EXTENSION block below).
+- `market_cap_float`       ← `ent_mv_ex_non_traded_treasury` — strict FREE FLOAT (ex non-traded AND treasury).
+- Legacy `market_cap` is KEPT and **double-fed == `market_cap_ex_treasury`** (same value, free) — a two-phase
+  prod-safe rollout (additive migration `0013`, NO rename; serving rewires to ex_treasury, then a later PR
+  drops `market_cap`). Scaling: all three carry `unit_factor=1e6`, applied by a metadata JOIN in
+  `stg_fds_company_market_cap` (the source rows are in millions). Pre-2015 rows carry `total` ONLY
+  (ex_treasury/float NULL there, by design — reconstruction is total-only).
+- **INVARIANT `total ≥ ex_treasury ≥ float`** (total adds treasury; float removes non-traded on top of
+  treasury). Holds on 134.4M vendor-era rows EXCEPT tiny tails that are **anomalies IN THE FDS SOURCE, not our
+  bug** (verified: sampled violations all have the same `ent_mv_ex_treasury < ent_mv_ex_non_traded_treasury`
+  in `fds.ent_v1_ent_entity_mkt_val`): 345 rows `total<ext` (0.0003%) + 126,199 rows `ext<float` (0.09%) — most
+  are rounding (e.g. 251.468066 vs 251.468070), a few are real provider anomalies (entity `0X82ZG-E`: float 4×
+  ext). Golden-source doctrine → we replicate the source faithfully, do NOT silently repair it.
+- **VALIDATION vs source (2026-08-21, via MCP on pg-factset):** master == `fds.ent_v1_ent_entity_mkt_val ×
+  unit_factor` **to the unit** on NVIDIA (84341: all 3 = 5,317,708,132,935 — mega-cap with zero treasury/
+  preferred/non-traded → 3 levels EQUAL is NORMAL, the source itself is equal) and on discriminating names
+  (34030: total 393.80G / ext 303.82G / float 152.33G; 35049: total 8× ext) — all exact. Entity resolution =
+  `company_id → entity_mapping(data_source_id=2) → external_entity_id = btrim(fds.factset_entity_id)::bpchar`.
+- **Perf note (same PR):** the pre-2015 reconstruction `int_company_market_cap_derived_local` was 24.9→5.2 min
+  after rewriting its share-match from a range `BETWEEN` (paired each price with the equity's ~966 ranges →
+  ~213 G comparisons) to an **AS-OF `LATERAL` join** (`so.date <= trade_date ORDER BY date DESC LIMIT 1`, one
+  index-scan per price on `idx_share_outstanding_equity_id_date`) + a `WHERE trade_date < '2020-12-30'` cap
+  (nothing ≥2020 is consumed). Whole `etl__market_company_mcap` job 59→39 min. ⚠️ A STALE dbt manifest silently
+  recreated the staging VIEW with the OLD (`market_cap`-only) definition and the loader rebuilt master on it —
+  after editing staging models, `dbt parse` + reload the code location BEFORE running.
+
 **`shares_outstanding` vs `market_cap` — same basis since the ex_treasury switch, but still APPROXIMATE.**
 `fgp_v1_fgp_shares_comp_hist.adj_shares_outstanding` (the only share column, company grain, fiscal-reported,
 split-adjusted, ×1e6 via metadata) = shares outstanding **net of treasury** (Toyota 13.03B = its real
