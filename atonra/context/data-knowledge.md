@@ -218,6 +218,21 @@ because they serve different consumers, so choosing one is the wrong framing:
   (nothing ≥2020 is consumed). Whole `etl__market_company_mcap` job 59→39 min. ⚠️ A STALE dbt manifest silently
   recreated the staging VIEW with the OLD (`market_cap`-only) definition and the loader rebuilt master on it —
   after editing staging models, `dbt parse` + reload the code location BEFORE running.
+- **DAILY = CDC (committed + pushed 2026-08-24, branch `feat/company-market-cap-3-levels`).** The full
+  CtasSwap became a MANUAL backfill (`etl__market_company_mcap_full`); the daily upserts only the vendor 2015+
+  deltas via `int_company_market_cap_changes` (drains `cdc.captured_change` for `ent_v1_ent_entity_mkt_val`,
+  the FIRST entity-grain CDC — key_columns `{factset_entity_id, mv_date}`, introspected). In-place upsert →
+  dependent VIEWS survive (no swap churn); only the `last_*` snapshot table is refreshed. The pre-2015
+  reconstruction (`dbt_op_mcap_hist`) is OUT of the daily → history frozen.
+- **CURRENCY GATE on the k calibration.** `derived_local` is in the QUOTE currency (`market_data`); `k =
+  ent_mv/derived_local` absorbs FX when `quote_ccy ≠ vendor_ccy`, so `derived_local × k` has a vendor-currency
+  magnitude with a FROZEN FX (up to ~20% off pre-2015). `hist_scaling` gates them out (join on `currency_id`):
+  measured **62 companies / 0.13%, all micro-caps** (median 11 M USD, 55/61 < 100 M USD) → NO pre-2015 for
+  them (they keep 2015+). Alternative (relabel vendor_ccy + real historical FX per date) deferred.
+- **fp has NO ready market-cap column** (checked 2026-08-24: `fp_*` = price/shares/divs/splits/returns, `-R`
+  grain only). It is COMPUTABLE (`fp_basic_prices.p_price × fp_basic_shares_hist.p_com_shs_out`, agg via
+  `fp_sec_entity`) and would extend history to ~2000 (vs FGP 2006, +~6 yr / ~37k cos) — but `derived_local`
+  stays on FGP/`master.market_data` (floor 2006); switching to fp = a separate future improvement.
 
 **`shares_outstanding` vs `market_cap` — same basis since the ex_treasury switch, but still APPROXIMATE.**
 `fgp_v1_fgp_shares_comp_hist.adj_shares_outstanding` (the only share column, company grain, fiscal-reported,
