@@ -7,7 +7,9 @@ argument-hint: "[target: PR# | branch | commit-range | (default: current branch)
 
 # Pipeline Review
 
-Review a data-pipeline change against Atonra conventions and golden-source doctrine, then call prod-readiness. Read-only: this produces a report, it does not edit code.
+Review a data-pipeline change against Atonra conventions and golden-source doctrine, then call prod-readiness.
+
+**NON-NEGOTIABLE — this is a review, NOT a fix.** Produce a report and stop. NEVER edit code, NEVER create/edit a migration, NEVER commit, NEVER propose an `AskUserQuestion` that offers to start fixing. The findings are the deliverable; the author decides what to do with them. Even when a fix looks trivial and obviously correct (a missing index, a wrong comment), you describe it — you do not apply it. If the user later wants a fix, that is a separate, explicit request in its own turn.
 
 The conventions are authoritative in the loaded context files — do NOT restate them from memory, verify against them: `dagster-patterns.md` (pipeline layers, dual-load, `_full`/`_changes` parity), `master-schema.md` (domain map, hypertables), `data-access-conventions.md` (read-vs-produce, master vs serving), `python-conventions.md`, `database-topology.md` (which MCP server is which). Docs are context to challenge, not law — verify against code and DB.
 
@@ -62,4 +64,4 @@ Present in chat (a review is a diagnostic, not a project artifact — do not sav
 3. **Findings, ranked** — 🔴 blocker / 🟠 major / 🟡 minor / ⚪ nit. Each: the defect, the concrete failure it causes (inputs → wrong output/scan/break), the file:line, the fix direction. Grade evidence: separate confirmed-in-code from suspected.
 4. **Prod-readiness** — what must change before merge vs what can follow. State it plainly.
 
-Do NOT fix in the same pass — report first, let the author choose what to act on.
+Then STOP. Do not edit, do not commit, do not offer to start fixing — the report is the whole deliverable (see the NON-NEGOTIABLE at the top). Wait for the author to ask, as a separate request, if they want any change made.
