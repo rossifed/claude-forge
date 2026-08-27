@@ -587,6 +587,41 @@ adjustment chain). `FND` instrument_type = unused reserve.
 - Excluded entirely: `ETF_UVI`/`ETF_NAV` (synthetic NAV series), `STRUCT`/`TEMP`/`RIGHT` (junk),
   non-fund-share tails held by fund entities (DR/WARRANT/SHARE).
 
+### FactSet FIGI/BBG identifiers → completion via OpenFIGI (measured 2026-08-27)
+
+`sym_v1_sym_bbg.bbg_id` **IS the FIGI** (not a separate id); `bbg_ticker` is the Bloomberg
+ticker. In the SOURCE, FIGI is on **100% of rows at all levels**, `bbg_ticker` is sparse
+(-L ~16%, -R ~13%, **-S 0%** — a share class has no exchange ticker). ⇒ **`bbg_ticker ⊆ figi`**:
+"bbg present, figi absent" = 0 (measured). A missing FIGI = the fsym is absent from `sym_v1_sym_bbg`
+at EVERY level (familial gap); FactSet-internal S/R/L navigation recovers only 52 more → exhausted.
+
+**Master storage:** `equity.figi` (`COALESCE(-S,-R)`) + `equity.bbg_ticker` (the -R composite);
+`quote_identifier` long form (`FIGI`/`BBG_TICKER` -L, `*_COMPOSITE` -R); `quote` carries
+`ticker`+`mic` (96.4% pop.)+`currency_id`+`is_primary`+`is_active` directly.
+
+**Coverage today (measured):** active primary equities FIGI 95.6% / BBG 67.8%; active primary
+quotes FIGI 95.3% / BBG **95.0%**; **delisted/inactive BBG ≈ 0%** everywhere.
+
+**OpenFIGI completion — two paths:**
+- **Path A (safe, by exact FIGI `ID_BB_GLOBAL`):** returns the record + `compositeFIGI`/
+  `shareClassFIGI` inline → fills the missing BBG ticker for every figi-present row. Correct by
+  construction (1 FIGI → 1 record). Lifts BBG coverage **up to = FIGI coverage**.
+- **Path B (gated, by `TICKER`+`micCode`):** only for the FIGI gap (~27-28k inactive quotes).
+  One query yields FIGI at all 3 levels + -L BBG. Ambiguous (share classes, **recycled tickers**)
+  → write ONLY if unique after filters (mic+currency+equity) AND cross-validated on name/country/
+  currency; else park, never guess.
+
+**Invariants:** a FIGI attaches to ONE instrument (enforce uniqueness before backfill);
+`source='openfigi'`, FactSet always wins on conflict. **`fsym_id` is NOT an OpenFIGI idType**
+(proprietary) — bridge via `bbg_id`(=FIGI), the native key.
+
+**Pertinence verdict:** the BBG gain is almost entirely on the **DELISTED/inactive** universe
+(BBG 0%→56-89%); on the **live** set BBG is already ≈ FIGI (active primary quotes +0.3 pt only).
+Active primary *instruments* still gain +27.8 pt (the -R composite is less covered). **Open risk
+(NOT measured):** Bloomberg often purges delisted tickers → real yield may be far below ceiling,
+exactly where 90% of the gain sits → run the pilot (`factset-api/openfigi_pilot.py`) first.
+Full analysis: `A-referential/08-openfigi-figi-bbg-completion.md`.
+
 ## Known Pitfalls
 
 ### `is_major_security` — propriété de société, PAS de négociabilité (mesuré 2026-07-27)
