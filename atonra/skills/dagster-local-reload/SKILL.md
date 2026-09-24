@@ -1,6 +1,6 @@
 ---
 name: dagster-local-reload
-description: "Repoint and reload the local Dagster code location (the data-pipeline container) so code/dbt changes take effect. Use when local Dagster (localhost:3000) does not reflect your changes, when working across two parallel repo checkouts (e.g. fundy vs fundy_main) and the container mounts the wrong one, when a new dbt model/asset does not appear, or when the code location fails to load. Covers: which checkout is live, force-recreate to repoint, in-container dbt parse + restart, and verifying the load via GraphQL (not docker logs)."
+description: "Repoint and reload the local Dagster stack so code/dbt changes take effect and runs can be launched. Use when local Dagster (localhost:3000) does not reflect your changes, when working across two parallel repo checkouts (e.g. fundy vs fundy_main) and the container mounts the wrong one, when a new dbt model/asset does not appear, when the code location fails to load, or when the UI/daemon is down. Covers: which checkout is live, force-recreate to repoint, in-container dbt parse + restart, verifying the load via GraphQL (not docker logs), DB reachability, and bringing up webserver + daemon (QueuedRunCoordinator) safely."
 user-invocable: true
 ---
 
@@ -29,6 +29,12 @@ Three facts that cause most of the lost time:
   in-flight `docker exec` (e.g. your `dbt parse`) — which dies with **exit 137, looking exactly like an OOM
   but is NOT one** (`docker inspect --format '{{.State.OOMKilled}}'` = false, `RestartCount` climbing). See
   step 4's crash-loop path.
+
+**Definition of done — the user invoking this skill wants a local Dagster READY TO LAUNCH RUNS.** Run steps 1 → 7
+end-to-end WITHOUT pausing for confirmation between steps (the invocation is the authorization): code location
+`data LOADED OK` + webserver up + daemon healthy + DB reachable. Stopping after the code location ("the webserver
+is down, shall I start it?") is an incomplete job. The ONLY stops: a genuine blocker you cannot fix, or before
+LAUNCHING a run (that writes data — the user decides what runs).
 
 ## Procedure — make THIS checkout live and reload (run in order, check each "Expect")
 
@@ -89,6 +95,15 @@ docker start data-pipeline
 one-off, add `--network container:data-pipeline` for DB reachability — and note the `kubectl` tunnel FLAPS,
 so a lone "connection refused" is usually the tunnel reconnecting, not your model.)
 
+**5a. Make sure the webserver is up (step 5 queries ITS GraphQL — it may have been stopped for weeks):**
+```bash
+docker ps --format '{{.Names}}' | grep -qx dagster-local-webserver || \
+  docker compose -f infrastructure/docker-compose/docker-compose.yml --profile dagster-local \
+    up -d --no-build --no-deps dagster-local-webserver
+until [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://localhost:3000/server_info)" = 200 ]; do sleep 2; done
+```
+`--no-deps`: never let it recreate `data-pipeline` (already repointed) nor start the daemon (step 7 does, safely).
+
 **5. Wait, then verify the code location loaded WITHOUT error — via GraphQL, NOT logs:**
 ```bash
 sleep 18
@@ -105,11 +120,36 @@ Expect the `data` line: `data LOADED OK`. If it shows `ERROR: …`, that message
 mapping below. **Never diagnose from `docker logs`**: it keeps old crash-loop errors, and a naive `--since`
 lies (host TZ vs container UTC). If you must read logs, read only after the LAST `Started Dagster code server`.
 
-**6. (Only if a job later fails to reach the DB) confirm DB reachability from the container:**
+**6. Confirm the container reaches the DB it will write to — through ITS OWN `DATA_DATABASE_URL` (the target
+varies: Tailscale host `fundy-factset:5432`, or the `kubectl` tunnel `172.19.0.1:5435`):**
 ```bash
-docker exec data-pipeline /opt/dagster/app/.venv/bin/python -c "import socket; socket.create_connection(('172.19.0.1',5435),5); print('TCP OK')"
+docker exec data-pipeline /opt/dagster/app/.venv/bin/python -c "
+import os, sqlalchemy as sa, urllib.parse as u
+url = os.environ['DATA_DATABASE_URL']; p = u.urlparse(url); print('target:', p.hostname, p.port, p.path.lstrip('/'))
+with sa.create_engine(url, connect_args={'connect_timeout': 8}).connect() as c:
+    print(c.execute(sa.text('select current_database(), (select version_num from public.alembic_version)')).one())"
 ```
-Expect `TCP OK`. Else the tunnel is down or bound to `127.0.0.1`: `kubectl port-forward --address 0.0.0.0 -n factset-prd svc/cluster-factset-rw 5435:5432 &`.
+Expect the intended DB and alembic head. If the target is the tunnel and it fails (down, or bound to `127.0.0.1`):
+`kubectl port-forward --address 0.0.0.0 -n factset-prd svc/cluster-factset-rw 5435:5432 &`.
+
+**7. Bring the daemon up — REQUIRED to launch anything: the instance uses `QueuedRunCoordinator`, so without the
+daemon a run launched from the UI sits in `QUEUED` forever.** The daemon also fires schedules/sensors, so first
+prove none is `RUNNING` (else it would trigger jobs against the DB on its own, duplicating Dagster Cloud):
+```bash
+curl -s http://localhost:3000/graphql -H 'Content-Type: application/json' -d '{"query":"{ repositoriesOrError { ... on RepositoryConnection { nodes { location { name } schedules { name scheduleState { status } } sensors { name sensorState { status } } } } } }"}' \
+ | python3 -c "
+import sys, json
+run = [(r['location']['name'], x['name']) for r in json.load(sys.stdin)['data']['repositoriesOrError']['nodes']
+       for x in r['schedules'] + r['sensors'] if (x.get('scheduleState') or x.get('sensorState'))['status'] == 'RUNNING']
+print('RUNNING schedules/sensors:', run or 'none')"
+# only if 'none' (else STOP and ask the user):
+docker compose -f infrastructure/docker-compose/docker-compose.yml --profile dagster-local \
+  up -d --no-build --no-deps dagster-local-daemon
+curl -s http://localhost:3000/graphql -H 'Content-Type: application/json' \
+ -d '{"query":"{ instance { daemonHealth { allDaemonStatuses { daemonType healthy } } } }"}'
+```
+Expect every daemon `healthy: true` (notably `QUEUED_RUN_COORDINATOR`). Done — report the ready state; the user
+launches the run (or gives an explicit GO for you to).
 
 ## `ERROR:` at step 5 → exact fix
 
@@ -122,6 +162,11 @@ Expect `TCP OK`. Else the tunnel is down or bound to `127.0.0.1`: `kubectl port-
 **New dbt model/seed checklist** (every node needs exactly one `dbt_op_<name>` tag or it is orphaned and
 never becomes an asset): tag it in `dbt_project.yml`; if it needs a NEW op, also declare it in
 `data/etl/master/assets/dbt/definitions.py` AND export it in `data/etl/master/assets/dbt/__init__.py`.
+Staging models inherit `dbt_op_stg` from the folder, but **intermediate models and seeds are tagged ONE BY ONE**
+(no folder default — tags are additive). And **no dbt test may have parents in two ops**: a `relationships` test
+from a model to a seed puts the seed in the model's op (precedent: `macro_family`/`macro_item` in `post`).
+Check the whole partition from a fresh manifest: every model/seed has exactly one `dbt_op_*` tag, and no test's
+parents span more than one op.
 
 ## Deeper infra (DB tunnel, full alembic rebuild, env-var reload, connectivity tests)
 
