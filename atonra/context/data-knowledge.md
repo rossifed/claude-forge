@@ -622,6 +622,32 @@ Active primary *instruments* still gain +27.8 pt (the -R composite is less cover
 exactly where 90% of the gain sits → run the pilot (`factset-api/openfigi_pilot.py`) first.
 Full analysis: `A-referential/08-openfigi-figi-bbg-completion.md`.
 
+### Entity geography, entity sub-type & foreign-ownership restriction (loaded 2026-09-24, migration 0023)
+
+**Geography = 5 roles on `fds.ent_v1_ent_entity_coverage`** → `master.entity_country` (entity grain, every
+FactSet-mapped entity): `iso_country` domicile · `iso_country_incorp` incorporation · `iso_country_cor` **risk** ·
+`iso_country_top_georev` top revenue · `iso_country_cor_georev` risk weighted by revenue.
+- The two risk fields DIFFER: TE Connectivity dom IE / cor **US** / cor_georev **CN**; Arch Capital dom BM / cor
+  **US** / cor_georev **CA**. National lists ("US company") → `iso_country_cor`.
+- COR on PUB: 99.8% filled, ≠ domicile in only ~1.1% (681) → a refinement; the big geography error is consumers
+  keying on the VENUE (listing) country. Sparse on funds (MUE ~73%, FND ~0.5%).
+- `99` = FactSet placeholder in `iso_country_cor_georev` (not ISO) → NULL.
+
+**Entity sub-type** (`ent_v1_ent_entity_coverage.entity_sub_type`, dictionary `ref_v2_entity_sub_type_map`, 28
+codes shared by issuers `ML`/`CP`/`FU`/`GV` and institutions `HF`/`IA`/`MF`…) → `master.entity.entity_sub_type_id`.
+~97% of live companies filled (99 MLPs), only ~3% of funds (use `fund_type` for funds).
+
+**Foreign-ownership restriction** (`fp_v2_fp_sec_coverage.p_sec_type_code`, keyed at `-R` only; dictionary
+`ref_v2_fp_sec_type_map`, 96 codes, FEED-specific — not ISO/CFI): ONLY `08` (all ownership restricted to domestic
+residents → FULL) and `09` (some restricted → PARTIAL) carry a restriction (verified exhaustive). Grain = SHARE
+CLASS: PetroChina A `601857` = 09/PARTIAL (Stock Connect / QFII), H `857` = 10/NONE. → `master.equity`
+`foreign_restriction_type_id` + raw `sec_type_code`. NULL (no FP coverage — 210 916 live equities) ≠ NONE: a
+"not restricted" filter must test `= NONE`.
+
+**Loader trap (pre-existing)**: the MERGE parent template matches `AND tgt.deleted_at IS NULL` → a soft-deleted
+entity is never updated nor revived even if back in the source (7 261 companies soft-deleted yet in the live
+perimeter, 2026-09-24). New entity columns therefore never reach extinct/deleted entities.
+
 ## Known Pitfalls
 
 ### `is_major_security` — propriété de société, PAS de négociabilité (mesuré 2026-07-27)
