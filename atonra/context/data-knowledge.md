@@ -633,6 +633,46 @@ adjustment chain). `FND` instrument_type = unused reserve.
 - Excluded entirely: `ETF_UVI`/`ETF_NAV` (synthetic NAV series), `STRUCT`/`TEMP`/`RIGHT` (junk),
   non-fund-share tails held by fund entities (DR/WARRANT/SHARE).
 
+### FactSet fund NAV (`master.fund_nav`) — source, coverage, gaps, adjustment (verified 2026-09-23/25)
+
+**Source & load.** `fund_nav` = FP basic price (`fds.fp_v2_fp_basic_prices`) of the share class's CURRENTLY
+designated regional (`sym_v1_sym_coverage.fsym_regional_id`), bridge `intermediate.int_fund_nav_source`
+(252,621 MF_O share classes, 1 row each). Stored RAW (unadjusted). Row-level reconciliation FP ↔ fund_nav
+(2026-09-23): 99.95 % identical; the gaps were repaired 2026-09-25 by the recovery jobs
+(`docs/factset-migration/timeseries-gap-recovery.md`, validation `docs/validation/2026-09-25_timeseries-recovery-fund-nav.md`).
+
+**Coverage.** FP is the ONLY NAV table in the datafeed (checked: all 374 `fds` tables, 57 ids at every level;
+FGP = exchange trades, `own_v5_own_sec_prices` = quarterly ownership prices, nothing else). FP covers ~27 % of
+MF_O share classes. The FactSet docs say it: "Security coverage may be limited as not every security that has
+prices on FactSet will be available in the feed" (Daily Prices V2 guide). No NAV-specific bundle in our FTP
+download (118 bundles in `fds.fds_fds_zip_history`).
+- **The Formula API (`FG_PRICE`) has NAVs FP lacks**: 6/8 missing Belfius/Candriam Robotics classes, 15 USD
+  classes (Mandarine, ENETIA, KBI, Allianz, R-Co). 0 for the 4 Japanese funds (no `-R` at FactSet; 2 not even
+  linked to a fund entity). Resolves by ISIN / `-S` / `-R`, NOT by FIGI. Quota 2,000 instruments.
+- **API `FG_PRICE` is SPLIT-adjusted, NOT dividend-adjusted**: on C Distribution (FVBL23-R) API = FP to the
+  cent after the 2001-06-15 10:1 split, API = FP/10 before. FP stores raw values.
+
+**Two `-R` of one `-S` are DISTINCT series** — never stitch them. 12 share classes whose designated regional
+changed: values of the old vs new `-R` never equal (0.5–1.4 % apart, one USD vs EUR), different exchanges (old
+all Vienna `WBO`, new FRA/MUN/STU), no record in `sym_v1_sym_merged_fsym_id`. Master still holds 33,168 rows
+of the old regionals (removable by the gap-repair job with `delete_absent_from_source`; decision pending).
+
+**NAV or exchange price?** 36 % of the share classes with an FP series (35,773 / 98,959) have a regional
+listed on a real exchange (not a `ZZ*` NAV-publication pseudo-venue). For the 12 above it is demonstrably an
+exchange price (differs across venues). For the rest NOT proven either way (US mutual funds publish NAV via a
+Nasdaq symbol, some LU/LON listings are official NAVs) — compare with the API NAV on a sample before relying on
+it as NAV.
+
+**Adjusted NAV — ingredients (for the adjusted-NAV work, not built yet):**
+- Splits: `fds.fp_v2_fp_basic_splits` (`p_split_date`, `p_split_factor`, e.g. 0.1 = 10:1) — 1,527 share
+  classes with NAV (1,872 events: 722 splits, 1,082 reverse, 68 other).
+- Dividends: `fds.fp_v2_fp_basic_dividends` (`p_divs_exdate`, `p_divs_pd` per share, `currency` = the NAV's) —
+  47,937 share classes (48 %); the other 52 % are presumably accumulating classes (not verified).
+- Same `-R` grain and currency as the NAV. The existing price factors (FGP → `master.cumulative_adjustment`)
+  cover only 365 of ~99k NAV share classes → not reusable.
+- No in-DB reference to validate an adjusted series: `fp_v2_fp_total_returns_daily` is delivered for the Asia
+  bundle only (C Distribution absent) → validate against an API total-return formula (not tested yet).
+
 ### FactSet FIGI/BBG identifiers → completion via OpenFIGI (measured 2026-08-27)
 
 `sym_v1_sym_bbg.bbg_id` **IS the FIGI** (not a separate id); `bbg_ticker` is the Bloomberg
