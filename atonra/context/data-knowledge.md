@@ -507,6 +507,52 @@ row-wise); CH `market_metrics` recomputes `tr_close` the same way. The `master.t
 table + its loader + the QA feed (`DS2PrimQtRI`, int/stg_qa_total_return_*) were REMOVED from dev
 code (empty 0-row tables linger on pg-factset until the next schema replay drops them).
 
+### FactSet INDEX prices — net/gross TR via `MSCI_TOTAL_RET_IDX`, NOT via FG_PRICE nor a `-MSX` id (verified live 2026-09-04)
+
+Index prices come from the **Formula API** (`raw.factset_api_index_price` → `stg_fdsapi_index_price` →
+`int_index_price` → `master.index_price`), NOT from `fds.*` (the bulk feed carries zero index data).
+Universe = dbt seed `seed.index_catalog` (`index_id,name,factset_id,currency_code`, ~26 provider
+indices) + in-house Workbench indices. Mapping keys on `factset_id`+`currency_code`.
+
+**Today there is NO real total return in `master.index_price`.** The pipeline pulls ONLY `FG_PRICE`
+= the **STANDARD / PRICE** index level, and `int_index_price` writes that single value into BOTH
+`gross_value` AND `net_value` (`p.price AS gross_value, p.price AS net_value`, `calculated=false`).
+Verified in-DB: `gross_value = net_value` on 100% of rows across all 27 indices → the "net"/"gross"
+columns are placeholders, not TR. (Magnitude sanity check: S&P 500 id 508 ≈ 7747, MSCI ACWI USD id
+656 ≈ 1154 — price-level order of magnitude, not the ~2× TR level.)
+
+**Net AND gross TR ARE retrievable via the API — via a DIFFERENT FORMULA, not a different id/field:**
+`MSCI_TOTAL_RET_IDX(<end>,<start>,<freq>,<currency>,<"NET"|"GROSS">)` — content set **"MSCI Global
+Indices"** (distinct from FG_PRICE = "Global Prices"). Net/gross is a **Type ARG**, not a separate id
+or column. Found via the Formula API Request Builder > Formula Lookup (filter "total return"). Date
+args YYYYMMDD, FIRST=most recent (like FG_PRICE); currency `'USD'` quoted or `LOC` keyword.
+- **Entitled**, verified on the SAME FactSet numeric id we already ingest, `892400` (MSCI ACWI):
+  NET USD = 6701 daily pts 2000-12-29→ (base 100 @ 2000-12-29, → 640.86); GROSS USD = 6961 pts
+  1999-12-31→ (base ~441, → 2763.80); LOC works too. NET history starts 2000-12 vs GROSS/price 1999-12.
+- **Use the FactSet numeric id, NOT the MSCI `-MSX` symbology.** `WD00000NUS-MSX` (="MSCI AC World
+  (NR) (USD)") RESOLVES via `PROPER_NAME` (error 0) but returns **null** for BOTH `FG_PRICE` and
+  `MSCI_TOTAL_RET_IDX` (all currencies/windows, latest point included) — a valid-but-wrong/unentitled
+  handle, NOT proof the series is unavailable (that was a false early conclusion from FG_PRICE alone).
+- `MSCI_TOTAL_RET_IDX` is **MSCI-only** → non-MSCI catalog entries (S&P 500 `SP50`, STOXX `183660`,
+  Nasdaq `00000129`, NYSE Arca `BTK`, SPI `SWXSXGE0`) need their provider's own TR formula (catalog
+  shows "Total Return Level - Gross or Net (Accumulation)" for *S&P Indices*, etc.).
+- Colleague's premise: half-right — same underlying index, retrievable; but mechanism = different
+  FORMULA (not a different identifier). The net-TR he sees is via the FactSet **terminal** (different
+  entitlement than the datafeed); via the API it comes from `MSCI_TOTAL_RET_IDX`.
+- **COVERAGE (measured 2026-09-04 across ALL 26 catalog rows):** `MSCI_TOTAL_RET_IDX` returns NET
+  **and** GROSS (26/26 recent points each) for all **21 MSCI** indices — every `MS…` + 6-digit id,
+  incl. EUR/CHF/USD variants (not just `892400`). **5 non-MSCI are NOT covered** (0 net / 0 gross) →
+  need their provider's own TR formula: STOXX Europe 600 (`183660`), S&P 500 (`SP50`), NYSE Arca
+  Biotechnology (`BTK`), Nasdaq Composite (`00000129`), Swiss Performance Index (`SWXSXGE0` — note the
+  SPI is itself already a performance/TR index).
+- **OPEN:** exact FQL codes for the non-MSCI TR formulas (catalog leads: "Total Return Level - Gross
+  or Net (Accumulation)" for *S&P Indices*; STOXX net/gross are usually separate ids SXXT/SXXR). `D`
+  frequency duplicates the last date (already handled downstream). To ship real net/gross: add the
+  NET+GROSS pulls for the 21 MSCI ids and populate `net_value`/`gross_value` for real instead of
+  copying FG_PRICE; non-MSCI stay on their own formula. Probes:
+  `~/dev/atonra/probes/factset-api/indices/probe_index_tr_coverage.py` (coverage map),
+  `probe_msci_tr_idx.py`, `probe_index_net_return.py`, `probe_net_return_diagnose.py` (same folder).
+
 ### FactSet migration — retired prod tables (decided 2026-07-20, IMPLEMENTED on dev 2026-07-22)
 
 - `company_weblink` (396 k, Refinitiv RKDFndCmpWebLink): OBSOLETE — FactSet ships a single
