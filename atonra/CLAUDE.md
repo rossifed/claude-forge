@@ -57,6 +57,10 @@
 
 - Provider reference docs (PDFs, guides) live in `~/Documents/<ProviderName>/` (e.g., `~/Documents/Refinitiv/`, `~/Documents/FactSet/`).
 - Analysis outputs go in the active project's `analysis/` directory — not in the forge repo.
+- Diagnostic/probe scripts (point-in-time API or DB measurements written during an investigation) live
+  OUTSIDE the project repos, in `~/dev/atonra/probes/<provider>/<domain>/` — never in `src/data/docs/`.
+  They are read-only, unmaintained, and kept as a record of method. See `~/dev/atonra/probes/README.md`
+  for the layout and how to run them (they import the project code through its editable venv).
 
 ## Stack Conventions
 
