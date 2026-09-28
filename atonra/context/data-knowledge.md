@@ -553,6 +553,27 @@ args YYYYMMDD, FIRST=most recent (like FG_PRICE); currency `'USD'` quoted or `LO
   `~/dev/atonra/probes/factset-api/indices/probe_index_tr_coverage.py` (coverage map),
   `probe_msci_tr_idx.py`, `probe_index_net_return.py`, `probe_net_return_diagnose.py` (same folder).
 
+**Index ids — use the NATIVE FactSet numeric id, never the ISIN nor the Bloomberg ticker (verified
+2026-09-28).** An ISIN resolves to a DIFFERENT, shorter series: STOXX Europe 600 `183660` → 1992,
+its ISIN `EU0009658202` → 2006 only (same recent values); EURO STOXX 50 ISIN `EU0009658145` →
+"EURO STOXX 50 (EUR) (Sarasin)", 2006 only. Bloomberg tickers (`SX5E`, `SX5T`, `SX5GT`) resolve to
+nothing (null, error 0). Finding a native id: batch-POST `PROPER_NAME` over a numeric range (STOXX
+family sits around 1836xx). EURO STOXX 50 native ids, all base 1000 @ 1992-01-01: **`183657`** price
+EUR (= SX5E), `183699` net return EUR, `183741` price USD, `183783` "TR" USD (net vs gross not
+checked). No gross EUR id found in 180000–189999. Unlike STOXX 600, the EURO STOXX 50 net TR is a
+separate native id → no need for `MSCI_TOTAL_RET_IDX`. Probes: `probe_sx5e_resolution.py`,
+`probe_sx5e_id_scan.py` (same folder).
+
+**`index_id` allocation (decided 2026-09-28).** Ids < 900000000 = legacy Workbench
+`wbfdm_instrument.id` (type 19) kept for prod continuity — EXCEPT `62714106`/`62714107` (MSCI ACWI
+Software & Services / Semiconductors), minted as max+1: in the Workbench those ids are EQUITIES
+(Strategy Inc, Tsk Electronica), not indices. Workbench is being decommissioned → new indices take
+ids from **`900000001`** upwards (fundy-owned range; `index_id` is `integer` everywhere, Workbench
+max ≈ 62.8M). First: EURO STOXX 50 = `900000001`, ETF proxy `223313` (iShares EURO STOXX 50 UCITS
+ETF (DE), 50 resolved holdings, 0 unresolved). ⚠️ Existing S&P 500 proxy `105496` (SPDR S&P 500 ETF
+Trust) has **0 rows** in `master.fund_holding` → `serving.index_holding` empty for index 508 (cause
+not investigated).
+
 ### FactSet migration — retired prod tables (decided 2026-07-20, IMPLEMENTED on dev 2026-07-22)
 
 - `company_weblink` (396 k, Refinitiv RKDFndCmpWebLink): OBSOLETE — FactSet ships a single
@@ -566,7 +587,7 @@ args YYYYMMDD, FIRST=most recent (like FG_PRICE); currency `'USD'` quoted or `LO
   `tool_builder.segment_revenue_analysis_df` = `_try_sources([IBES 8/9, RKD 1/2])` returns the first
   non-empty. With this, the WHOLE remaining QA ingestion was removed: **zero `stg_qa`/`qa_*` on the
   FactSet dev path** (only historical code comments name old stg_qa for lineage).
-- `macro_*` (FRED): out of migration scope, unchanged, already out of the daily job.
+- `macro_*` (FRED): out of migration scope; remodelled 2026-09-25 (see "FRED macro series → master").
 - KG family (kg_triplet, supply_chain, competitor, long_term_risk, hidden_connection,
   entity_concept) + `gics_company_classification`/`last_metrics` read-models → serving.
 - ⚠️ stray `master.entity_financial_ratio` snapshot in pg-factset (830 452 rows, 2026-06-25,
@@ -733,6 +754,42 @@ CLASS: PetroChina A `601857` = 09/PARTIAL (Stock Connect / QFII), H `857` = 10/N
 **Loader trap (pre-existing)**: the MERGE parent template matches `AND tgt.deleted_at IS NULL` → a soft-deleted
 entity is never updated nor revived even if back in the source (7 261 companies soft-deleted yet in the live
 perimeter, 2026-09-24). New entity columns therefore never reach extinct/deleted entities.
+
+### FRED macro series → master (verified 2026-09-25)
+
+Model (branch `fix/macro-fred-additive-ingestion`, doc `src/data/docs/macro/01-macro-series-model.md`):
+source layer `seed.macro_series_selection` (the ONLY list driving the fetch, explicit stable ids,
+`data_source_id` 3 = FRED) → `master.macro_series` (FRED's own metadata via `/fred/series`) +
+`master.macro_series_value` (only storage of values); curation `macro_family` + `macro_series_family`;
+`master.macro_item` / `macro_value` = TEMPORARY compat VIEWS (Macro Factory aliases, read by the CH copy
+and Tony's scripts — DECOMMISSION-ledger §5). 175 series: Macro Factory 110/110, MacroCockpit FRED 101/101.
+
+- **Metadata comes from FRED, never hand-typed.** The former seed (copied from the Macro Factory) had
+  wrong `freq`: `AAA10Y`/`BAA10Y`/`THREEFYTP10` declared monthly, actually DAILY (262 obs/2024). The
+  Macro Factory doc describes "BAA long history, monthly, 1953" = FRED `BAA10YM`, not daily `BAA10Y`.
+- **FRED `.` = missing observation.** Landing it let the (series_id, date) merge overwrite a stored value
+  with NULL — FRED DOES blank history it served before (237 GASREGW weeks, 2026-09-21). Drop `.` at the
+  source; the merge never deletes absent keys, so history FRED stops serving is kept. Origin of the
+  14,262 former NULL rows: 86 % US holidays on daily series (0 on weekends), old unpublished months,
+  Oct-2025 CPI/U6/Sahm.
+- **ICE BofA spreads are a rolling ~3-year window on FRED (licence).** `BAMLH0A0HYM2`, `BAMLC0A0CM`,
+  `BAMLEMCBPIOAS` (+ `BAMLHE00EHYIOAS`): our history starts 2023-07-24; FRED's own start already moved
+  to 2023-09-26 → the additive merge keeps what FRED drops. No long history without a licensed source.
+- **Never pass a fixed `observation_start`.** FRED's default (1776-07-04 = earliest) serves full history;
+  the former `1900-01-01` floor truncated `USREC` (from 1854-12, +541 rows) — only series <1900 of 175.
+- **Rate limit 120 req/min** (429 beyond, repeated excess can block the key). No bulk endpoint:
+  `/fred/series` and `/fred/series/observations` take ONE `series_id` → 2 calls/series. A 110-series run
+  hit ~112/min → calls spaced 0.6 s. 175 series ≈ 5 min/run, bound by the call count, not the payload
+  (only ~31/174 series change per day — optimisation by `last_updated` possible, not done).
+- **Daily schedule was never enabled** (`macro_daily_schedule` STOPPED like all schedules): only 2 FRED
+  loads before 2026-09-25, last 2026-08-07.
+- **Kenneth French factors: NOT master-eligible.** No API (static zips), a dataset silently abandoned
+  (`Global_3_Factors_Daily` frozen 2019-06, removed from the catalogue), full-history revisions (401 /
+  1,194 months changed between two vintages), daily→monthly not reproducible for SMB/HML.
+- **Consumers:** Tony's Macro Factory runs manually from a workstation against CH (`timeseries.macro_value`
+  by alias → `analytics.macro_*`, own `analytics.macro_catalog`). MacroCockpit (Davide) = local pipeline
+  (not on GitHub), authoritative catalogue `config/indicators.yaml` exported to `macro_source_catalogue.xlsx`
+  (189 series, 21 sources; 60 non-FRED not ingested). No data API endpoint for macro yet.
 
 ## Known Pitfalls
 
