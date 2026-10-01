@@ -963,6 +963,62 @@ s'annule ; seul le **mélange de bases** casse.
   ou **splits+spinoffs** ? → décide `corpact_adjustment` (split+spinoff) vs `fp_v2_fp_basic_splits` (split
   pur). Se vérifie sur un cas de spinoff réel (valeur estimée avant/après vs facteur de chaque table).
 
+### FactSet history restatements freeze in windowed ClickHouse copies — optimizer mcap history WRONG (measured 2026-10-01, fix deferred)
+
+**Trigger case — Tera Prove (6627, company 122541, entity `09693Y-E`), 1:5 split (`fp_v2_fp_basic_splits`
+factor 0.2, 2026-09-29).** Market cap needs NO corporate-action adjustment (price ÷5 × shares ×5 = same
+value); it is only wrong if price and shares are on different bases on the same day. FactSet got it wrong
+for ONE delivery: CDC on `fds.ent_v1_ent_entity_mkt_val` shows two full-history rewrites of the entity —
+captured 2026-09-29 02:10, **2,802 updates (2015-12-31 → 2026-09-25), every value ×0.2 exactly**; captured
+2026-09-30 06:10, 2,803 updates, every value ×5 exactly (restored). Master replicated both faithfully
+(golden-source doctrine). Because a DB lock blocked the nightly job, the correction reached master only
+2026-10-01 08:44 → master was ÷5 for ~31 h (2026-09-30 01:30 → 2026-10-01 08:44); a colleague read
+`serving.company_market_cap_usd` in that window (18.4 bn JPY instead of 92.1 bn, "9,097,028 shares").
+~50 companies were hit by the same 2026-09-29 wave (e.g. Akita Bank, Awa Bank ÷5 — visible as the 50
+×2+ outliers frozen at 2026-09-17 below). After the fix: master == source to the unit on all 2,805
+dates (2015+), pre-2015 reconstruction continuous (no day-over-day jump >±50 % over 4,040 dates).
+- **Validation trap:** `mcp` date columns render as UTC timestamps shifted one day back
+  (`2026-09-14T22:00Z` = 2026-09-15). Cast `::text` before reading dates.
+- `screener.instrument` (PG, legacy v1 screener) is FROZEN since 2026-08-25 (all 59,828 rows,
+  `market_cap_date` ≤ 08-21) — to decommission, never use as a reference. Screener v2 / optimizer
+  `instrument_data` show the latest value correctly (`latest_market_cap_usd`; `market_cap` column in
+  `mart_screener_v2.screener` is ALSO USD despite `market_cap_currency`; its `market_cap_date` = last
+  price date, not the mcap date — not investigated).
+
+**Root cause of the residual damage — the optimizer mart only refreshes a rolling window.**
+`v2_mart_optimizer_rolling_update_job` (`src/optimizer/optimizer_pipelines/isolated_mart_assets.py`,
+`mart_optimizer_rolling_window` / `mart_optimizer_sync_raw_window`) reloads `company_market_cap_raw` from
+`company_market_cap_usd` only for `[today+1−14, today+1)` (DELETE window + INSERT). Prices get an extra
+`SOURCE_CORRECTION_LOOKBACK_DAYS` (14) read-back, **market cap does not**. ⇒ each date keeps the master
+value of the run where it last sat in the window (~D+13); any later vendor restatement (or transient
+vendor error caught at the window edge) is frozen forever. Snapshots (`quote_daily_snapshot_all` →
+views `market_data` / `market_data_weekly`) are rebuilt on the same window → frozen too.
+
+**Measured (opt `company_market_cap_raw.market_cap` vs `timeseries.company_market_cap`, ~51k cos/date):**
+- ≥ 2026-09-18 (in window): 0 diff. 2026-09-17 (window edge of the 2026-09-30 run): 95 cos >1 %, 50 ×2+.
+- Sep (before 17th): 85–540 cos >1 %/date; Jul 15 → Aug: 600–1,950; **before 2026-07-15: ~9,500 (19 %)**.
+- ×2+ diffs are split-sized ratios (×5, ×10, ÷2, ÷5, ÷10); 7/7 spot-checked against master: master ==
+  `timeseries`, the optimizer copy is wrong.
+- **Before 2026-07-15, ~11,500 cos/date still carry `ent_mv` (TOTAL)** — the mart was never fully
+  reloaded after the ex_treasury switch → a backtest crosses a convention break around 2026-07-15.
+- `shares_outstanding` in the copy is on the old pre-split basis (Tera Prove 9.1 M vs master 45.5 M on
+  2,795/2,805 dates); `market_cap_ex_treasury` NULL on all pre-2026 rows (column added after the load).
+- Caveat: `timeseries.company_market_cap` used as master proxy; it is ALSO window-loaded — verified
+  identical to master only on Tera Prove (4,040 rows, exact sums) + 7 spot rows, not universe-wide.
+
+**Consumers / impact (code-derived, NOT measured on a real backtest):** live builds read the latest
+dates → OK. **Backtests** read `market_cap_usd` point-in-time at past rebalance dates via
+`market_data[_weekly]`: min/max market-cap filters (`optimizer/builder/builders/filters.py:1314-1355`),
+top-N market-cap cutoff (`filters.py:1384-1390`), cap weighting at build date (`builder.py:192`,
+`weight_utils`), TopN sector cap weights (`top_n.py`), `sparse_tracker` threshold. A ÷5 can drop a name
+out of a top-N; treasury-heavy names are inflated before 2026-07-15 (`ent_mv` ×1.5–3.9 on JPM/GE).
+
+**Fix options (deferred, nothing run):** (1) one-shot full reload of `company_market_cap_raw` AND
+rebuild the daily + weekly snapshots (raw-only reload is not enough); (2) structural: refresh the
+(company, date) pairs actually changed in master (CDC / `updated_at`) instead of a fixed window, or a
+periodic full reload — same flaw likely on other windowed copies (adjusted prices, ratios, `timeseries`);
+(3) guard: alert when the vendor rewrites an entity's whole history by a constant ratio.
+
 ## Value Formats & Conventions
 
 ### Refinitiv ItemPrecision codes
