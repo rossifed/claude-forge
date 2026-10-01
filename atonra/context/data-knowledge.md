@@ -791,6 +791,17 @@ and Tony's scripts — DECOMMISSION-ledger §5). 175 series: Macro Factory 110/1
   (not on GitHub), authoritative catalogue `config/indicators.yaml` exported to `macro_source_catalogue.xlsx`
   (189 series, 21 sources; 60 non-FRED not ingested). No data API endpoint for macro yet.
 
+### FactSet exchange calendars — holidays only, weekends curated (measured 2026-09-30)
+
+`fds.ref_v2_ref_calendar_holidays` (fref_exchange_code = `venue_mapping.external_venue_id`, ds=2):
+175k non-weekend closures, 371 exchanges, 1928 → 2030, covers 99.7 % of active quotes. It **never lists
+weekends**, and weekends change (UAE Sun→Thu until 2021, Mon→Fri from 2022; Tel Aviv Sun→Thu →
+Mon→Fri on 2026-01-03; Saudi Sat→Wed → Sun→Thu 2013-06-29) → curated seed
+`curation_venue_trading_week` keyed by venue mnemonic, ISO weekdays (1 = Mon … 7 = Sun), measured on prices
+(traded day = ≥10 % of the venue's median daily active quotes; result insensitive to the threshold).
+Validated 2012-2026 on 7 venues: ≤2 mismatches each, all explained (a price gap on 2026-08-03, the
+Tokyo outage of 2020-10-01, rare provider errors). Doc `A-referential/10-venue-trading-calendar.md`.
+
 ## Known Pitfalls
 
 ### `is_major_security` — propriété de société, PAS de négociabilité (mesuré 2026-07-27)
