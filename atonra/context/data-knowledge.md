@@ -802,6 +802,44 @@ Mon→Fri on 2026-01-03; Saudi Sat→Wed → Sun→Thu 2013-06-29) → curated s
 Validated 2012-2026 on 7 venues: ≤2 mismatches each, all explained (a price gap on 2026-08-03, the
 Tokyo outage of 2020-10-01, rare provider errors). Doc `A-referential/10-venue-trading-calendar.md`.
 
+### ADV / liquidity — local currency everywhere, USD columns added in the mart (decided 2026-10-02)
+
+**Fact (verified 2026-10-01):** the ADV (`avg(adjusted_close × adjusted_volume)`) is in the **listing's currency**
+in every computation: `master.liquidity`/`last_metrics` (data API `/last-metrics/`) and the optimizer mart
+(`liquidity_raw` → `tradable_instrument_data` → screener). It never was USD (Refinitiv prod too). Consumers that
+convert it themselves: back-office constraints (front `toUsd`, #678), constraint engine (`fundyapp/portfolios`
+`to_usd_millions`, #35), thematic universes (front `adv_22 × fx`, #534). Everything else (screener page, optimizer
+`min/max_liquidity`, dynamic universes, positions "$") compares local values to USD thresholds (Ascletis 1672:
+24.7 M HKD shown as "$" ≈ 3.15 M USD; KRW ≈ ×1,400). Two separate ADV computations exist (PG master + CH mart).
+
+**Branch `fix/adv-usd-columns` (commit 2b140e7b1):** mart adds `adv_*_usd`, `latest_liquidity_usd`,
+`liquidity_adv_20_usd`; screener mart/API expose them. Decisions:
+- **Additive**, local columns unchanged — the back-office already converts `latest_liquidity` (would convert twice).
+- **Local average, then × rate of the same day** — "tradable per day in today's USD"; same convention as the
+  back-office/engine. Per-session conversion rejected (old sessions at old rates; Samsung 66d ≈ 7 % apart).
+- **Join the rates AFTER the window functions.** Measured on the daily scope: 106 MiB vs 87 MiB before; join
+  before the windows = 1.48 GiB (×17): a join ahead of `avg() OVER (PARTITION BY quote_id ORDER BY trade_date)`
+  breaks ClickHouse's in-order read of the (quote_id, trade_date)-sorted table and forces a full in-memory sort.
+  After the windows: 131 MiB on 100 days, 156 MiB on 400 days, 1.12 GiB vs 866 MiB on the full history in one query.
+- **Rates = `fx_rate_raw`**, X → USD rows of `master.fx_rate` copied into the mart (same window as the liquidity
+  run). USD = reference currency; master keeps every pair. No dependency on `timeseries` (rejected), no rate in
+  `master.market_data_adjusted` (a view over 49 GB `market_data`, every reader would pay the join).
+- **Exact-day rate**, no as-of fallback: prices normally land after the rates (2026-10-01 AUD/NZD gap = a late
+  price load); the 28-day rolling window recomputes a late day.
+- **No rate → NULL**, never the local figure: 324 of 107,985 quotes traded over 28 days (0.3 %), all currencies
+  absent from `fds.ref_v2_econ_fx_rates_usd` (TND, IQD, MNT, ZWG, VES, ZMW, SYP, NPR, BBD, BSD, BMD, AMD, PAB, LAK,
+  ZWR, KYD) + GBX; Refinitiv prod has none of them since 2026-09-01. RUB rate stops 2022-03-01 (no RUB price since).
+- **Master and the data API untouched** (`market_anomaly` divides two local values).
+- **Open, in order:** full mart history rebuild (USD NULL beyond ~28 days until then) → optimizer filters on
+  `liquidity_adv_20_usd` (switching first = backtests filter on NULL) → front migration. Long term: compute
+  liquidity/vol/momentum/returns once upstream (`timeseries` or a metrics zone) — separate project.
+- **Rollback:** revert + `ALTER TABLE mart_optimizer_v2.liquidity_raw DROP COLUMN adv_{5,22,66,126,252}_usd` —
+  the previous code inserts into that table without a column list.
+
+**GBX label ≠ pence price (verified 2026-10-02).** `master.quote` can carry `GBX` while the FGP price is in pounds:
+JUKE (CCRM, quote 174626) 38.05 "GBX" vs 38.04 GBP on XLON. FactSet ships no GBX rate. Never divide by 100 on the
+label alone; the quote currency is to be fixed in master.
+
 ## Known Pitfalls
 
 ### `is_major_security` — propriété de société, PAS de négociabilité (mesuré 2026-07-27)
