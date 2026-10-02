@@ -684,15 +684,41 @@ exchange price (differs across venues). For the rest NOT proven either way (US m
 Nasdaq symbol, some LU/LON listings are official NAVs) — compare with the API NAV on a sample before relying on
 it as NAV.
 
-**Adjusted NAV — ingredients (for the adjusted-NAV work, not built yet):**
+**Adjusted NAV — ingredients:**
 - Splits: `fds.fp_v2_fp_basic_splits` (`p_split_date`, `p_split_factor`, e.g. 0.1 = 10:1) — 1,527 share
   classes with NAV (1,872 events: 722 splits, 1,082 reverse, 68 other).
 - Dividends: `fds.fp_v2_fp_basic_dividends` (`p_divs_exdate`, `p_divs_pd` per share, `currency` = the NAV's) —
   47,937 share classes (48 %); the other 52 % are presumably accumulating classes (not verified).
 - Same `-R` grain and currency as the NAV. The existing price factors (FGP → `master.cumulative_adjustment`)
   cover only 365 of ~99k NAV share classes → not reusable.
-- No in-DB reference to validate an adjusted series: `fp_v2_fp_total_returns_daily` is delivered for the Asia
-  bundle only (C Distribution absent) → validate against an API total-return formula (not tested yet).
+
+**Adjusted NAV — Total Returns entitlement gap, recipe, validation, decision (2026-10-02, branch
+`feat/fund-nav-adjustment`, full doc `docs/factset-migration/funds/07-nav-adjustment.md`):**
+- FactSet sells the fund NAV *ingredients* ("Daily Prices V2": raw NAV, dividend AMOUNTS, split FACTORS) and, as a
+  SEPARATE package, the *result* ("Daily Prices V2 – Total Returns", `fp_total_returns_daily`). We download the
+  ingredients for Americas, Europe/Africa AND Asia/Pacific, but Total Returns for **Asia/Pacific only**
+  (`fds.fds_fds_zip_history`: `fp_total_returns_ap_v2` 315 zips, AM/EU bundles never) → ready TR for 422 of
+  252,700 NAV regionals (0.2 %). No fund adjustment-factor table exists anywhere (FP guide Appendix A gives the
+  functions the CLIENT must build; FGP `fgp_ca_adj_factors` covers 479 regionals). **ACTION: ask FactSet** whether
+  the missing AM/EU Total Returns entitlement is intended or an oversight (entitlements were forgotten before).
+- So we compute: split = `p_split_factor` as shipped (applies to NAVs < split date; 0.1 = 10:1); dividend factor
+  `P_d / (P_d + f·D)`, `D` = Σ `p_divs_pd` of the ex-date (never `p_divs_pd_ngequiv`: for 'G' rows it is the UK
+  notional tax credit pd/0.9), `P_d` = last NAV ON OR BEFORE the ex-date (weekend rule), `f` = same-day split;
+  `s_pd = 1` specials = price factor `(P_prev − S)/P_prev`. FP NAV and dividends are both RAW, same currency.
+- **Validated identical to the FactSet Formula API** (`FG_PRICE` = split-adjusted NAV; `P_TOTAL_RETURNC` = daily
+  TR %): 34 hard-case classes 100 %; 200 stratified classes (20 currencies, 33 countries) adjusted NAV 572,860/572,860
+  days, daily TR 99.999 % within 0.0005 pp (5 single-day residuals on extreme 1996/1999/2014 days).
+- **The API carries the same data defects** (phantom / factor-1 / missing splits, euro-legacy seed errors, outliers,
+  flat carried-forward NAVs: 1.3 % of series with an unexplained move ≥ ×2, 4.2 % ≥ ×1.25, 14 % with ≥ 1 month of
+  identical NAVs) → FactSet is NOT a clean reference. **Decision: step 1 = FactSet's recipe on FactSet's data as-is
+  (source of truth, golden-source doctrine); step 2 (later) = a generic data-quality layer that FLAGS, across
+  datasets.**
+- Design: master tables = exact twins of the equity chain with the `fund_` prefix (`fund_corpact_event`,
+  `fund_dividend`, `fund_dividend_type` [FP codes collide with FGP `dividend_type`], `fund_corpact_adjustment`,
+  `fund_dividend_adjustment`, `fund_cumulative_adjustment`, view `fund_nav_adjusted`); FP logic in stg/int only.
+  Dividend factors are **computed once and kept in master** (re-pricing all ~2.5M ex-dates = ~13 min of NAV
+  lookups): daily, only new / amount-revised / NAV-touched ex-dates are re-priced; recompute via
+  `etl__market_fund_nav_adjustment_reset` (targeted `equity_ids` or full with confirmation).
 
 ### FactSet FIGI/BBG identifiers → completion via OpenFIGI (measured 2026-08-27)
 
